@@ -1,0 +1,8 @@
+{
+  "noun": "soothe",
+  "begin": null,
+  "room": "{target} feels the room warm.",
+  "victim": null,
+  "resisted_room": null,
+  "resisted_victim": null
+}

@@ -1,0 +1,7 @@
+{
+  "kind": "edit",
+  "reply": "Added a room where the hall already is.",
+  "edits": [
+    {"edit": "add_room", "id": "new_room", "concept": "a new room", "at": {"x": 0, "y": 0, "z": 0}, "size": "normal", "tags": []}
+  ]
+}

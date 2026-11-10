@@ -1,0 +1,27 @@
+{
+  "mobs": [
+    {
+      "id": "goblin",
+      "concept": "a goblin",
+      "level": 3,
+      "stats": {"str": 10, "dex": 12},
+      "vitals": {"hp": 30},
+      "behaviors": [],
+      "loot": [],
+      "spawns": [],
+      "todos": []
+    },
+    {
+      "id": "goblin_shaman",
+      "concept": "a goblin shaman",
+      "level": 5,
+      "stats": {"int": 14},
+      "vitals": {"hp": 20, "mana": 30},
+      "skills": {"//zones/tutorial:fireball": 40},
+      "behaviors": [],
+      "loot": [],
+      "spawns": [],
+      "todos": []
+    }
+  ]
+}

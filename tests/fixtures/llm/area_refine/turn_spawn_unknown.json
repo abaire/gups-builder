@@ -1,0 +1,8 @@
+{
+  "kind": "edit",
+  "reply": "Added a banshee to the hall.",
+  "edits": [
+    {"edit": "add_spawn", "room": "hall", "mob": "//zones/mansion:banshee"},
+    {"edit": "set_room", "id": "attic", "tags": ["dusty"]}
+  ]
+}

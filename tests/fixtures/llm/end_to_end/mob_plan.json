@@ -1,0 +1,20 @@
+{
+  "mobs": [
+    {
+      "id": "ghost",
+      "concept": "a restless ghost",
+      "level": 8,
+      "stats": {"dex": 12, "wis": 14},
+      "vitals": {"hp": 25, "mana": 15},
+      "resists": {},
+      "skills": {},
+      "senses": {},
+      "behaviors": [{"name": "wander", "args": {}}],
+      "factions": [],
+      "traits": [],
+      "loot": [],
+      "spawns": [{"room": "cellar", "count": 1, "respawn_pulses": null}],
+      "todos": []
+    }
+  ]
+}

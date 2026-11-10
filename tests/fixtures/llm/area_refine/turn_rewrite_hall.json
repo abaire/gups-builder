@@ -1,0 +1,7 @@
+{
+  "kind": "edit",
+  "reply": "Made the hall creepier.",
+  "edits": [
+    {"edit": "rewrite", "ids": ["hall"], "guidance": "creepier"}
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "noun": "spark",
+  "begin": "{actor}'s fingertips crackle with heat.",
+  "room": null,
+  "victim": "{target} feels the spark build.",
+  "resisted_room": null,
+  "resisted_victim": null
+}

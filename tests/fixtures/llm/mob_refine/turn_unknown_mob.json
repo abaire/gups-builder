@@ -1,0 +1,7 @@
+{
+  "kind": "edit",
+  "reply": "Buffed the dragon.",
+  "edits": [
+    {"edit": "set_mob", "id": "dragon", "fields": {"vitals": {"$call": "vitals", "args": [], "kwargs": {"hp": 40}}}}
+  ]
+}

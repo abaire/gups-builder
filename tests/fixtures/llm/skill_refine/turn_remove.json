@@ -1,0 +1,5 @@
+{
+  "kind": "edit",
+  "reply": "Mend is gone.",
+  "edits": [{"edit": "remove_skill", "id": "mend"}]
+}

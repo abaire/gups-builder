@@ -1,0 +1,149 @@
+{
+  "format": 1,
+  "api_version": 1,
+  "engine_version": "0.0.0-test",
+  "schema": {
+    "stats": [
+      {"name": "str", "label": "Strength"},
+      {"name": "dex", "label": "Dexterity"},
+      {"name": "con", "label": "Constitution"},
+      {"name": "int", "label": "Intelligence"},
+      {"name": "wis", "label": "Wisdom"},
+      {"name": "armor", "label": "Armor"}
+    ],
+    "vitals": [
+      {"name": "hp", "label": "Health"},
+      {"name": "mana", "label": "Mana"}
+    ],
+    "damage_types": [
+      {"name": "bludgeon", "label": "Bludgeon", "adjective": "crushing"},
+      {"name": "slash", "label": "Slash", "adjective": "slashing"},
+      {"name": "fire", "label": "Fire", "adjective": "fiery"}
+    ],
+    "unarmed_damage_type": "bludgeon",
+    "channels": ["sight", "smell", "sound", "spell"]
+  },
+  "features": ["combat", "leveling", "skills", "track"],
+  "commands": {"cast": "invoke"},
+  "packages": [
+    {"path": "zones/mansion", "kind": "zone", "ok": true}
+  ],
+  "rooms": [
+    {
+      "label": "//zones/mansion:hall",
+      "name": "The Hall",
+      "size": "large",
+      "exits": [
+        {"dir": "east", "to": "//zones/mansion:kitchen", "door": {"state": "locked", "key": "//zones/mansion:silver_key", "tags": []}},
+        {"dir": "north", "to": "//zones/mansion:study", "door": null},
+        {"dir": "up", "to": "//zones/mansion:master_bedroom", "door": null}
+      ]
+    },
+    {
+      "label": "//zones/mansion:kitchen",
+      "name": "The Kitchen",
+      "size": "normal",
+      "exits": [
+        {"dir": "west", "to": "//zones/mansion:hall", "door": {"state": "locked", "key": "//zones/mansion:silver_key", "tags": []}},
+        {"dir": "north", "to": "//zones/mansion:library", "door": null},
+        {"dir": "east", "to": "//zones/mansion:parlour", "door": null}
+      ]
+    },
+    {
+      "label": "//zones/mansion:study",
+      "name": "The Study",
+      "size": "normal",
+      "exits": [
+        {"dir": "south", "to": "//zones/mansion:hall", "door": null},
+        {"dir": "east", "to": "//zones/mansion:library", "door": null}
+      ]
+    },
+    {
+      "label": "//zones/mansion:library",
+      "name": "The Library",
+      "size": "normal",
+      "exits": [
+        {"dir": "south", "to": "//zones/mansion:kitchen", "door": null},
+        {"dir": "west", "to": "//zones/mansion:study", "door": null},
+        {"dir": "up", "to": "//zones/mansion:nursery", "door": null}
+      ]
+    },
+    {
+      "label": "//zones/mansion:parlour",
+      "name": "The Parlour",
+      "size": "normal",
+      "exits": [
+        {"dir": "west", "to": "//zones/mansion:kitchen", "door": null},
+        {"dir": "up", "to": "//zones/mansion:bedroom", "door": null},
+        {"dir": "down", "to": "//zones/mansion:cellar", "door": null}
+      ]
+    },
+    {
+      "label": "//zones/mansion:master_bedroom",
+      "name": "The Master Bedroom",
+      "size": "normal",
+      "exits": [{"dir": "down", "to": "//zones/mansion:hall", "door": null}]
+    },
+    {
+      "label": "//zones/mansion:nursery",
+      "name": "The Nursery",
+      "size": "normal",
+      "exits": [
+        {"dir": "down", "to": "//zones/mansion:library", "door": null},
+        {"dir": "southeast", "to": "//zones/mansion:bedroom", "door": null}
+      ]
+    },
+    {
+      "label": "//zones/mansion:bedroom",
+      "name": "The Bedroom",
+      "size": "normal",
+      "exits": [
+        {"dir": "down", "to": "//zones/mansion:parlour", "door": null},
+        {"dir": "northwest", "to": "//zones/mansion:nursery", "door": null}
+      ]
+    },
+    {
+      "label": "//zones/mansion:cellar",
+      "name": "The Cellar",
+      "size": "cramped",
+      "tags": ["dark"],
+      "exits": [{"dir": "up", "to": "//zones/mansion:parlour", "door": null}]
+    },
+    {
+      "label": "//zones/mansion:vault",
+      "name": "The Vault",
+      "size": "normal",
+      "exits": [{"dir": "east", "to": "//zones/mansion:hall"}]
+    }
+  ],
+  "mobs": [
+    {
+      "label": "//zones/mansion:ghost",
+      "name": "the ghost",
+      "keywords": ["ghost"],
+      "level": 3,
+      "stats": {"str": 8, "int": 12},
+      "vitals": {"hp": 20},
+      "resists": {},
+      "skills": {},
+      "traits": [],
+      "factions": null
+    }
+  ],
+  "items": [
+    {
+      "label": "//zones/mansion:silver_key",
+      "name": "a small silver key",
+      "keywords": ["key", "silver"],
+      "kind": "key",
+      "wear": null,
+      "weight": 1,
+      "value": 0
+    }
+  ],
+  "skills": [],
+  "factions": [],
+  "regions": [],
+  "plugins": [],
+  "errors": []
+}

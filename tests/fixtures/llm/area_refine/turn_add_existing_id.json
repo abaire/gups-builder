@@ -1,0 +1,8 @@
+{
+  "kind": "edit",
+  "reply": "Added a second hall east of the parlour.",
+  "edits": [
+    {"edit": "add_room", "id": "hall", "concept": "a second hall", "at": {"x": 3, "y": 0, "z": 0}, "size": "normal", "tags": []},
+    {"edit": "connect", "a": "hall", "b": "parlour"}
+  ]
+}

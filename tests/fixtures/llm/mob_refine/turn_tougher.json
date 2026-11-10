@@ -1,0 +1,7 @@
+{
+  "kind": "edit",
+  "reply": "Toughened the shaman.",
+  "edits": [
+    {"edit": "set_mob", "id": "goblin_shaman", "fields": {"vitals": {"$call": "vitals", "args": [], "kwargs": {"hp": 40}}}}
+  ]
+}

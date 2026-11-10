@@ -1,0 +1,16 @@
+{
+  "id": "chilling_touch",
+  "concept": "a chilling touch that seeps cold into the victim",
+  "kind": "spell",
+  "cost": {"mana": 6},
+  "warmup": 0,
+  "lag": 4,
+  "range": "near",
+  "target": "enemy",
+  "channels": ["spell"],
+  "tags": [],
+  "interrupt": {},
+  "effect": {"primitive": "damage", "args": {"dice": "1d6", "type": "pierce"}},
+  "teach": [{"mob": "ghost", "proficiency": 100}],
+  "todos": []
+}

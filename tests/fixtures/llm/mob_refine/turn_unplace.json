@@ -1,0 +1,7 @@
+{
+  "kind": "edit",
+  "reply": "Unplaced the goblin.",
+  "edits": [
+    {"edit": "unplace", "room": "hall", "mob": "goblin"}
+  ]
+}

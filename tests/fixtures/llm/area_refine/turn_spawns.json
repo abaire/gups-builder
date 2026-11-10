@@ -1,0 +1,8 @@
+{
+  "kind": "edit",
+  "reply": "Moved the ghost from the cellar to the hall.",
+  "edits": [
+    {"edit": "add_spawn", "room": "hall", "mob": "//zones/mansion:ghost"},
+    {"edit": "remove_spawn", "room": "cellar", "mob": "//zones/mansion:ghost"}
+  ]
+}

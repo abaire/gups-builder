@@ -1,0 +1,5 @@
+{
+  "kind": "edit",
+  "reply": "The begin line is creepier now.",
+  "edits": [{"edit": "rewrite", "ids": ["spark"], "guidance": "make the begin line creepier"}]
+}

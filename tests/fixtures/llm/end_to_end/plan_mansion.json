@@ -1,0 +1,30 @@
+{
+  "rooms": [
+    {"id": "hall", "concept": "a grand entrance hall", "at": {"x": 0, "y": 0, "z": 0}, "size": "large", "tags": []},
+    {"id": "kitchen", "concept": "a cold kitchen", "at": {"x": 1, "y": 0, "z": 0}, "size": "normal", "tags": []},
+    {"id": "study", "concept": "a study full of ledgers", "at": {"x": 0, "y": 1, "z": 0}, "size": "normal", "tags": []},
+    {"id": "library", "concept": "a library", "at": {"x": 1, "y": 1, "z": 0}, "size": "normal", "tags": []},
+    {"id": "parlour", "concept": "a parlour", "at": {"x": 2, "y": 0, "z": 0}, "size": "normal", "tags": []},
+    {"id": "master_bedroom", "concept": "the master bedroom", "at": {"x": 0, "y": 0, "z": 1}, "size": "normal", "tags": []},
+    {"id": "nursery", "concept": "an old nursery", "at": {"x": 1, "y": 1, "z": 1}, "size": "normal", "tags": []},
+    {"id": "bedroom", "concept": "a guest bedroom", "at": {"x": 2, "y": 0, "z": 1}, "size": "normal", "tags": []},
+    {"id": "cellar", "concept": "a dark cellar", "at": {"x": 0, "y": 0, "z": -1}, "size": "cramped", "tags": ["dark"]}
+  ],
+  "connections": [
+    {"a": "hall", "b": "kitchen", "door": {"state": "locked", "key": "silver_key", "tags": []}},
+    {"a": "hall", "b": "study"},
+    {"a": "kitchen", "b": "library"},
+    {"a": "study", "b": "library"},
+    {"a": "kitchen", "b": "parlour"},
+    {"a": "hall", "b": "master_bedroom"},
+    {"a": "library", "b": "nursery"},
+    {"a": "parlour", "b": "bedroom"},
+    {"a": "nursery", "b": "bedroom"},
+    {"a": "hall", "b": "cellar"}
+  ],
+  "portals": [],
+  "keys": [{"id": "silver_key", "concept": "a small silver key"}],
+  "entry": "hall",
+  "link": null,
+  "todos": []
+}

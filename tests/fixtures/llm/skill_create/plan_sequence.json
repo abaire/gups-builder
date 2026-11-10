@@ -1,0 +1,23 @@
+{
+  "id": "combo",
+  "concept": "a spell that burns the enemy and then stuns it",
+  "kind": "spell",
+  "cost": {"mana": 12},
+  "warmup": 2,
+  "lag": 4,
+  "range": "near",
+  "target": "enemy",
+  "channels": ["spell"],
+  "tags": [],
+  "interrupt": {},
+  "effect": {
+    "primitive": "sequence",
+    "args": {},
+    "effects": [
+      {"primitive": "damage", "args": {"dice": "1d6", "type": "fire"}},
+      {"primitive": "stun", "args": {"pulses": 2}}
+    ]
+  },
+  "teach": [],
+  "todos": []
+}

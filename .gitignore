@@ -1,16 +1,6 @@
-.gradle/
-build/
-.kotlin/
-.idea/
-*.iml
-.DS_Store
-
-# Dev-server databases and backups
-.gups/
-
-# Local development world
-local-world/
-
-
-# Agents' scratch area (see AGENTS.md)
-local-world-test/
+.DS_Store/
+.venv/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+dist/

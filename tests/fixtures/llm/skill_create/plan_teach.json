@@ -1,0 +1,16 @@
+{
+  "id": "spark",
+  "concept": "a fire spell that lashes a single enemy",
+  "kind": "spell",
+  "cost": {"mana": 8},
+  "warmup": 0,
+  "lag": 4,
+  "range": "near",
+  "target": "enemy",
+  "channels": ["spell", "sound"],
+  "tags": ["blue"],
+  "interrupt": {},
+  "effect": {"primitive": "damage", "args": {"dice": "2d4", "type": "fire"}},
+  "teach": [{"mob": "goblin_shaman", "proficiency": 30}],
+  "todos": []
+}

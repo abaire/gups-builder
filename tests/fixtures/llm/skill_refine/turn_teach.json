@@ -1,0 +1,26 @@
+{
+  "kind": "edit",
+  "reply": "The goblin learns the spark.",
+  "edits": [
+    {
+      "edit": "add_skill",
+      "skill": {
+        "id": "spark",
+        "concept": "a fire spell that lashes a single enemy",
+        "kind": "spell",
+        "cost": {"mana": 8},
+        "warmup": 0,
+        "lag": 4,
+        "range": "near",
+        "target": "enemy",
+        "channels": ["spell", "sound"],
+        "tags": [],
+        "interrupt": {},
+        "effect": {"primitive": "damage", "args": {"dice": "2d4", "type": "fire"}},
+        "teach": [],
+        "todos": []
+      }
+    },
+    {"edit": "teach", "id": "spark", "mob": "goblin", "proficiency": 30}
+  ]
+}

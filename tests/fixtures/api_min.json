@@ -1,0 +1,2431 @@
+{
+  "api_version": 1,
+  "engine_version": "<engine>",
+  "declarations": [
+    {
+      "symbol": "door",
+      "name": "door",
+      "doc": "A door, for exit(door=...).",
+      "hook_owner": null,
+      "extra_keywords": false,
+      "since": 1,
+      "params": [
+        {
+          "symbol": "door.state",
+          "name": "state",
+          "type": "str",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "'closed'",
+          "allowed_values": [
+            "open",
+            "closed",
+            "locked"
+          ],
+          "doc": "Initial door state: 'open', 'closed' or 'locked'.",
+          "since": 1
+        },
+        {
+          "symbol": "door.key",
+          "name": "key",
+          "type": "label",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "None",
+          "allowed_values": [],
+          "doc": "Item prototype label required to lock or unlock the door.",
+          "since": 1
+        },
+        {
+          "symbol": "door.tags",
+          "name": "tags",
+          "type": "list[str]",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "[]",
+          "allowed_values": [],
+          "doc": "Tags the rules read, such as 'heavy', 'creaky' or 'transparent', to price sensing and muffling.",
+          "since": 1
+        }
+      ]
+    },
+    {
+      "symbol": "exit",
+      "name": "exit",
+      "doc": "An exit, for room(exits=[...]).",
+      "hook_owner": null,
+      "extra_keywords": false,
+      "since": 1,
+      "params": [
+        {
+          "symbol": "exit.direction",
+          "name": "direction",
+          "type": "str",
+          "positional": true,
+          "keyword": false,
+          "required": true,
+          "default": null,
+          "allowed_values": [],
+          "doc": "Exit direction name, such as 'north', 'up' or a custom word.",
+          "since": 1
+        },
+        {
+          "symbol": "exit.to",
+          "name": "to",
+          "type": "label",
+          "positional": true,
+          "keyword": true,
+          "required": true,
+          "default": null,
+          "allowed_values": [],
+          "doc": "Destination room label.",
+          "since": 1
+        },
+        {
+          "symbol": "exit.entry_index",
+          "feature": "track",
+          "name": "entry_index",
+          "type": "int",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "0",
+          "allowed_values": [],
+          "doc": "Track index in the destination room where travellers arrive, or -1 for the back.",
+          "since": 1
+        },
+        {
+          "symbol": "exit.tags",
+          "name": "tags",
+          "type": "list[str]",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "[]",
+          "allowed_values": [],
+          "doc": "Tags the rules read, such as 'soundproof' or 'sealed', to price sensing across the exit.",
+          "since": 1
+        },
+        {
+          "symbol": "exit.door",
+          "name": "door",
+          "type": "door",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "None",
+          "allowed_values": [],
+          "doc": "Optional door on this exit, built with door(...).",
+          "since": 1
+        },
+        {
+          "symbol": "exit.one_way",
+          "name": "one_way",
+          "type": "bool",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "False",
+          "allowed_values": [],
+          "doc": "True if this exit intentionally has no return exit.",
+          "since": 1
+        }
+      ]
+    },
+    {
+      "symbol": "item",
+      "name": "item",
+      "doc": "Declares an item prototype.",
+      "hook_owner": "item",
+      "extra_keywords": false,
+      "since": 1,
+      "params": [
+        {
+          "symbol": "item.id",
+          "name": "id",
+          "type": "str",
+          "positional": true,
+          "keyword": false,
+          "required": true,
+          "default": null,
+          "allowed_values": [],
+          "doc": "The item's declaration name within the package.",
+          "since": 1
+        },
+        {
+          "symbol": "item.name",
+          "name": "name",
+          "type": "str",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "id with spaces",
+          "allowed_values": [],
+          "doc": "Display name shown to players.",
+          "since": 1
+        },
+        {
+          "symbol": "item.plural",
+          "name": "plural",
+          "type": "str",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "None",
+          "allowed_values": [],
+          "doc": "Display name for stacks of 2 or more, such as 'gold coins'.",
+          "since": 1
+        },
+        {
+          "symbol": "item.keywords",
+          "name": "keywords",
+          "type": "list[str]",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "words of name",
+          "allowed_values": [],
+          "doc": "Words players can use to target this item.",
+          "since": 1
+        },
+        {
+          "symbol": "item.desc",
+          "name": "desc",
+          "type": "str",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "''",
+          "allowed_values": [],
+          "doc": "Description shown when examining the item.",
+          "since": 1
+        },
+        {
+          "symbol": "item.kind",
+          "name": "kind",
+          "type": "str",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "'misc'",
+          "allowed_values": [],
+          "doc": "Item category, such as 'misc', 'melee', 'ranged', 'armor' or 'key'.",
+          "since": 1
+        },
+        {
+          "symbol": "item.range",
+          "feature": "track",
+          "name": "range",
+          "type": "str",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "'melee'",
+          "allowed_values": [
+            "melee",
+            "near",
+            "far"
+          ],
+          "doc": "Weapon reach band: 'melee', 'near' or 'far'.",
+          "since": 1
+        },
+        {
+          "symbol": "item.weight",
+          "name": "weight",
+          "type": "int",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "1",
+          "allowed_values": [],
+          "doc": "Weight of one item.",
+          "since": 1
+        },
+        {
+          "symbol": "item.value",
+          "name": "value",
+          "type": "int",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "0",
+          "allowed_values": [],
+          "doc": "Base price of one item; 0 by default.",
+          "since": 1
+        },
+        {
+          "symbol": "item.wear",
+          "name": "wear",
+          "type": "str",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "None",
+          "allowed_values": [],
+          "doc": "Equipment slot or slot family the item is worn in.",
+          "since": 1
+        },
+        {
+          "symbol": "item.wield",
+          "name": "wield",
+          "type": "str",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "None",
+          "allowed_values": [],
+          "doc": "Alias for wear, for weapons.",
+          "since": 1
+        },
+        {
+          "symbol": "item.slot_cost",
+          "name": "slot_cost",
+          "type": "int",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "1",
+          "allowed_values": [],
+          "doc": "How many slots of its family the item takes up; at least 1.",
+          "since": 1
+        },
+        {
+          "symbol": "item.dice",
+          "name": "dice",
+          "type": "dice",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "None",
+          "allowed_values": [],
+          "doc": "Weapon damage dice such as '1d6+1'.",
+          "since": 1
+        },
+        {
+          "symbol": "item.damage_type",
+          "name": "damage_type",
+          "type": "str",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "unarmed_damage_type",
+          "allowed_values": [],
+          "doc": "Weapon damage type, a declared damage type such as DAMAGE.slash.",
+          "since": 1
+        },
+        {
+          "symbol": "item.stat_deltas",
+          "name": "stat_deltas",
+          "type": "stats",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "stats()",
+          "allowed_values": [],
+          "doc": "Stat adjustments applied while the item is worn, built with stats(...).",
+          "since": 1
+        },
+        {
+          "symbol": "item.sense_deltas",
+          "name": "sense_deltas",
+          "type": "dict[str, int]",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "{}",
+          "allowed_values": [],
+          "doc": "Sense score changes by channel while the item is worn.",
+          "since": 1
+        },
+        {
+          "symbol": "item.max_vital_deltas",
+          "name": "max_vital_deltas",
+          "type": "vitals",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "vitals()",
+          "allowed_values": [],
+          "doc": "Vital maximum adjustments applied while the item is worn, built with vitals(...).",
+          "since": 1
+        },
+        {
+          "symbol": "item.resist_deltas",
+          "name": "resist_deltas",
+          "type": "resists",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "resists()",
+          "allowed_values": [],
+          "doc": "Damage resistance adjustments applied while the item is worn, built with resists(...).",
+          "since": 1
+        },
+        {
+          "symbol": "item.tags",
+          "name": "tags",
+          "type": "list[str]",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "[]",
+          "allowed_values": [],
+          "doc": "Tags for plugin restrictions and scripts.",
+          "since": 1
+        },
+        {
+          "symbol": "item.stackable",
+          "name": "stackable",
+          "type": "bool",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "False",
+          "allowed_values": [],
+          "doc": "True if identical items merge into a stack.",
+          "since": 1
+        },
+        {
+          "symbol": "item.decay_pulses",
+          "name": "decay_pulses",
+          "type": "int",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "None",
+          "allowed_values": [],
+          "doc": "Pulses before the item decays, or None for permanent items.",
+          "since": 1
+        },
+        {
+          "symbol": "item.container",
+          "name": "container",
+          "type": "container",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "None",
+          "allowed_values": [],
+          "doc": "Container settings, built with container(...).",
+          "since": 1
+        },
+        {
+          "symbol": "item.commands",
+          "name": "commands",
+          "type": "dict[str, function]",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "{}",
+          "allowed_values": [],
+          "doc": "Item-local commands mapping verb name to fn(ctx).",
+          "since": 1
+        },
+        {
+          "symbol": "item.hooks",
+          "name": "hooks",
+          "type": "dict[str, function]",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "{}",
+          "allowed_values": [],
+          "doc": "Custom hooks, by name, run with ctx.call_hook.",
+          "since": 1
+        },
+        {
+          "symbol": "item.equip_affects",
+          "name": "equip_affects",
+          "type": "list[str | dict]",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "[]",
+          "allowed_values": [],
+          "doc": "Affects applied when the item is worn: a flag held while worn, or {'flag': str, 'pulses': int} for a timed one. 'stunned' must be timed.",
+          "since": 1
+        },
+        {
+          "symbol": "item.affects",
+          "name": "affects",
+          "type": "list[item_affect]",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "[]",
+          "allowed_values": [],
+          "doc": "Affects every instance carries, built with item_affect(...).",
+          "since": 1
+        },
+        {
+          "symbol": "item.variants",
+          "name": "variants",
+          "type": "dict[str, str]",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "{}",
+          "allowed_values": [],
+          "doc": "Related item prototypes by free-form name, for transform.",
+          "since": 1
+        },
+        {
+          "symbol": "item.charges",
+          "name": "charges",
+          "type": "int",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "None",
+          "allowed_values": [],
+          "doc": "Uses before the item is spent, at least 1; None for unlimited.",
+          "since": 1
+        },
+        {
+          "symbol": "item.empty",
+          "name": "empty",
+          "type": "str",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "'destroy'",
+          "allowed_values": [],
+          "doc": "After the last charge: 'destroy', 'keep', or the name of one of the item's variants.",
+          "since": 1
+        },
+        {
+          "symbol": "item.use_effect",
+          "name": "use_effect",
+          "type": "effect",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "None",
+          "allowed_values": [],
+          "doc": "Effect primitive that use applies, with the user as caster.",
+          "since": 1
+        },
+        {
+          "symbol": "item.use_target",
+          "name": "use_target",
+          "type": "str",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "'self'",
+          "allowed_values": [
+            "enemy",
+            "ally",
+            "self",
+            "item",
+            "none",
+            "room"
+          ],
+          "doc": "Whom use_effect acts on: 'enemy', 'ally', 'self', 'item' or 'none'.",
+          "since": 1
+        },
+        {
+          "symbol": "item.use_lag",
+          "name": "use_lag",
+          "type": "int",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "0",
+          "allowed_values": [],
+          "doc": "Recovery lag in pulses after a use; at least 0.",
+          "since": 1
+        },
+        {
+          "symbol": "item.modifiers",
+          "name": "modifiers",
+          "type": "dict[str, function]",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "{}",
+          "allowed_values": [
+            "to_hit",
+            "damage",
+            "bonus_damage",
+            "defend_hit",
+            "receive_damage",
+            "mitigate",
+            "initiative",
+            "cast_allowed",
+            "move_cost",
+            "move_pace",
+            "regen",
+            "advance_lag",
+            "retreat_lag",
+            "retreat_fail_lag",
+            "flee_fail_lag",
+            "skill_check",
+            "skill_power",
+            "item_power"
+          ],
+          "doc": "Rules modifiers active while the item is worn.",
+          "since": 1
+        },
+        {
+          "symbol": "item.procs",
+          "feature": "combat",
+          "name": "procs",
+          "type": "list[proc]",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "[]",
+          "allowed_values": [],
+          "doc": "Combat procs that fire during auto-attack swings.",
+          "since": 1
+        },
+        {
+          "symbol": "item.version",
+          "name": "version",
+          "type": "int",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "1",
+          "allowed_values": [],
+          "doc": "Prototype schema version for persisted state migration.",
+          "since": 1
+        }
+      ]
+    },
+    {
+      "symbol": "loot",
+      "name": "loot",
+      "doc": "A loot roll, for mob(loot=[...]). chance is a percent from 0 to 100.",
+      "hook_owner": null,
+      "extra_keywords": false,
+      "since": 1,
+      "params": [
+        {
+          "symbol": "loot.label",
+          "name": "label",
+          "type": "label",
+          "positional": true,
+          "keyword": false,
+          "required": true,
+          "default": null,
+          "allowed_values": [],
+          "doc": "Item prototype label dropped on death.",
+          "since": 1
+        },
+        {
+          "symbol": "loot.chance",
+          "name": "chance",
+          "type": "int",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "100",
+          "allowed_values": [],
+          "doc": "Drop chance in percent, 0 to 100.",
+          "since": 1
+        },
+        {
+          "symbol": "loot.count",
+          "name": "count",
+          "type": "int",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "1",
+          "allowed_values": [],
+          "doc": "Number of items dropped when the roll succeeds.",
+          "since": 1
+        }
+      ]
+    },
+    {
+      "symbol": "mob",
+      "name": "mob",
+      "doc": "Declares a mob prototype.",
+      "hook_owner": "mob",
+      "extra_keywords": false,
+      "since": 1,
+      "params": [
+        {
+          "symbol": "mob.id",
+          "name": "id",
+          "type": "str",
+          "positional": true,
+          "keyword": false,
+          "required": true,
+          "default": null,
+          "allowed_values": [],
+          "doc": "The mob's declaration name within the package.",
+          "since": 1
+        },
+        {
+          "symbol": "mob.name",
+          "name": "name",
+          "type": "str",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "id with spaces",
+          "allowed_values": [],
+          "doc": "Display name shown to players.",
+          "since": 1
+        },
+        {
+          "symbol": "mob.keywords",
+          "name": "keywords",
+          "type": "list[str]",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "words of name",
+          "allowed_values": [],
+          "doc": "Words players can use to target this mob.",
+          "since": 1
+        },
+        {
+          "symbol": "mob.desc",
+          "name": "desc",
+          "type": "str",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "''",
+          "allowed_values": [],
+          "doc": "Description shown when looking at the mob.",
+          "since": 1
+        },
+        {
+          "symbol": "mob.level",
+          "feature": "leveling",
+          "name": "level",
+          "type": "int",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "1",
+          "allowed_values": [],
+          "doc": "Mob level.",
+          "since": 1
+        },
+        {
+          "symbol": "mob.stats",
+          "name": "stats",
+          "type": "stats",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "stats()",
+          "allowed_values": [],
+          "doc": "Base stats the mob starts from, built with stats(...).",
+          "since": 1
+        },
+        {
+          "symbol": "mob.vitals",
+          "name": "vitals",
+          "type": "vitals",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "vitals()",
+          "allowed_values": [],
+          "doc": "Maximum vitals the mob starts from, built with vitals(...).",
+          "since": 1
+        },
+        {
+          "symbol": "mob.resists",
+          "name": "resists",
+          "type": "resists",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "resists()",
+          "allowed_values": [],
+          "doc": "Damage resistance percentage by damage type, built with resists(...).",
+          "since": 1
+        },
+        {
+          "symbol": "mob.skills",
+          "feature": "skills",
+          "name": "skills",
+          "type": "dict[label, int]",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "{}",
+          "allowed_values": [],
+          "doc": "Known skills mapping skill label to proficiency (0..100).",
+          "since": 1
+        },
+        {
+          "symbol": "mob.senses",
+          "name": "senses",
+          "type": "dict[str, int]",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "{}",
+          "allowed_values": [],
+          "doc": "Base sense score by channel, merged over sight and sound at 1; 0 senses nothing on that channel.",
+          "since": 1
+        },
+        {
+          "symbol": "mob.memory_pulses",
+          "feature": "combat",
+          "name": "memory_pulses",
+          "type": "int",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "None",
+          "allowed_values": [],
+          "doc": "Combat memory window in pulses, overriding module(memory_pulses); 0 keeps none, None uses the world's.",
+          "since": 1
+        },
+        {
+          "symbol": "mob.think",
+          "name": "think",
+          "type": "function",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "None",
+          "allowed_values": [],
+          "doc": "Custom AI function fn(ctx) run on each think cycle.",
+          "since": 1
+        },
+        {
+          "symbol": "mob.think_every",
+          "name": "think_every",
+          "type": "int",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "4",
+          "allowed_values": [],
+          "doc": "Pulses between AI think cycles.",
+          "since": 1
+        },
+        {
+          "symbol": "mob.leash",
+          "name": "leash",
+          "type": "int | None",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "None",
+          "allowed_values": [],
+          "doc": "Most exits from its home room the mob's own movement goes; None for no leash.",
+          "since": 1
+        },
+        {
+          "symbol": "mob.hooks",
+          "name": "hooks",
+          "type": "dict[str, function]",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "{}",
+          "allowed_values": [],
+          "doc": "Custom hooks, by name, run with ctx.call_hook.",
+          "since": 1
+        },
+        {
+          "symbol": "mob.behaviors",
+          "name": "behaviors",
+          "type": "list[behavior]",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "[]",
+          "allowed_values": [],
+          "doc": "Built-in behaviors such as wander(...) or aggressive(...).",
+          "since": 1
+        },
+        {
+          "symbol": "mob.dormant_recovery",
+          "name": "dormant_recovery",
+          "type": "str",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "'full'",
+          "allowed_values": [
+            "full",
+            "regen",
+            "none"
+          ],
+          "doc": "How the mob recovers when its room wakes from dormancy.",
+          "since": 1
+        },
+        {
+          "symbol": "mob.loot",
+          "name": "loot",
+          "type": "list[loot]",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "[]",
+          "allowed_values": [],
+          "doc": "Loot rules rolled when the mob dies, built with loot(...).",
+          "since": 1
+        },
+        {
+          "symbol": "mob.traits",
+          "name": "traits",
+          "type": "list[str]",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "[]",
+          "allowed_values": [],
+          "doc": "Traits defined by the world's plugins.",
+          "since": 1
+        },
+        {
+          "symbol": "mob.factions",
+          "feature": "standing",
+          "name": "factions",
+          "type": "list[label]",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "None",
+          "allowed_values": [],
+          "doc": "Faction labels the mob belongs to; when absent, its own prototype label.",
+          "since": 1
+        },
+        {
+          "symbol": "mob.version",
+          "name": "version",
+          "type": "int",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "1",
+          "allowed_values": [],
+          "doc": "Prototype schema version for persisted state migration.",
+          "since": 1
+        }
+      ]
+    },
+    {
+      "symbol": "package",
+      "name": "package",
+      "doc": "Declares the package. Must be called exactly once, in package.star.",
+      "hook_owner": null,
+      "extra_keywords": false,
+      "since": 1,
+      "params": [
+        {
+          "symbol": "package.api_version",
+          "name": "api_version",
+          "type": "int",
+          "positional": false,
+          "keyword": true,
+          "required": true,
+          "default": null,
+          "allowed_values": [],
+          "doc": "The script API version this package targets.",
+          "since": 1
+        },
+        {
+          "symbol": "package.kind",
+          "name": "kind",
+          "type": "str",
+          "positional": false,
+          "keyword": true,
+          "required": true,
+          "default": null,
+          "allowed_values": [
+            "zone",
+            "lib",
+            "rules",
+            "skills"
+          ],
+          "doc": "Package kind: 'zone', 'lib', 'rules' or 'skills'.",
+          "since": 1
+        },
+        {
+          "symbol": "package.title",
+          "name": "title",
+          "type": "str",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "package path",
+          "allowed_values": [],
+          "doc": "Human-readable title of the package.",
+          "since": 1
+        },
+        {
+          "symbol": "package.reset_world_ticks",
+          "name": "reset_world_ticks",
+          "type": "int",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "None",
+          "allowed_values": [],
+          "doc": "World ticks (30 s each) between zone resets, or None for no periodic reset.",
+          "since": 1
+        },
+        {
+          "symbol": "package.shared_namespaces",
+          "name": "shared_namespaces",
+          "type": "list[str]",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "[]",
+          "allowed_values": [],
+          "doc": "Attribute namespaces this privileged (lib or rules) package may write across packages.",
+          "since": 1
+        },
+        {
+          "symbol": "package.modifiers",
+          "name": "modifiers",
+          "type": "dict[str, function]",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "{}",
+          "allowed_values": [
+            "to_hit",
+            "damage",
+            "bonus_damage",
+            "defend_hit",
+            "receive_damage",
+            "mitigate",
+            "initiative",
+            "cast_allowed",
+            "move_cost",
+            "move_pace",
+            "regen",
+            "advance_lag",
+            "retreat_lag",
+            "retreat_fail_lag",
+            "flee_fail_lag",
+            "skill_check",
+            "skill_power",
+            "item_power"
+          ],
+          "doc": "Zone-wide rules modifiers by modifier point name.",
+          "since": 1
+        },
+        {
+          "symbol": "package.expected_tombstones",
+          "name": "expected_tombstones",
+          "type": "list[label]",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "[]",
+          "allowed_values": [],
+          "doc": "Prototype labels intentionally removed in this version, for migration checks.",
+          "since": 1
+        },
+        {
+          "symbol": "package.migrate_noop",
+          "name": "migrate_noop",
+          "type": "list[label]",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "[]",
+          "allowed_values": [],
+          "doc": "Prototype labels whose version rose without needing a migrate() function.",
+          "since": 1
+        }
+      ]
+    },
+    {
+      "symbol": "room",
+      "name": "room",
+      "doc": "Declares a room.",
+      "hook_owner": "room",
+      "extra_keywords": false,
+      "since": 1,
+      "params": [
+        {
+          "symbol": "room.id",
+          "name": "id",
+          "type": "str",
+          "positional": true,
+          "keyword": false,
+          "required": true,
+          "default": null,
+          "allowed_values": [],
+          "doc": "The room's declaration name within the package.",
+          "since": 1
+        },
+        {
+          "symbol": "room.name",
+          "name": "name",
+          "type": "str",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "id with spaces",
+          "allowed_values": [],
+          "doc": "Display name shown to players.",
+          "since": 1
+        },
+        {
+          "symbol": "room.desc",
+          "name": "desc",
+          "type": "str",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "''",
+          "allowed_values": [],
+          "doc": "Room description shown when looking.",
+          "since": 1
+        },
+        {
+          "symbol": "room.size",
+          "feature": "track",
+          "name": "size",
+          "type": "str",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "'normal'",
+          "allowed_values": [
+            "cramped",
+            "normal",
+            "large"
+          ],
+          "doc": "Track size: 'cramped' (1 slot), 'normal' (3 slots) or 'large' (6 slots).",
+          "since": 1
+        },
+        {
+          "symbol": "room.regions",
+          "name": "regions",
+          "type": "list[str]",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "[]",
+          "allowed_values": [],
+          "doc": "Region tags that apply their modifiers in this room.",
+          "since": 1
+        },
+        {
+          "symbol": "room.tags",
+          "name": "tags",
+          "type": "list[str]",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "[]",
+          "allowed_values": [],
+          "doc": "Tags for plugin restrictions and scripts.",
+          "since": 1
+        },
+        {
+          "symbol": "room.flags",
+          "name": "flags",
+          "type": "list[str]",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "[]",
+          "allowed_values": [
+            "always_active",
+            "dead_end_ok"
+          ],
+          "doc": "Room flags such as 'always_active' or 'dead_end_ok'.",
+          "since": 1
+        },
+        {
+          "symbol": "room.exits",
+          "name": "exits",
+          "type": "list[exit]",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "[]",
+          "allowed_values": [],
+          "doc": "Exits leading out of this room, built with exit(...).",
+          "since": 1
+        },
+        {
+          "symbol": "room.spawns",
+          "name": "spawns",
+          "type": "list[spawn]",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "[]",
+          "allowed_values": [],
+          "doc": "Mob spawn rules for this room, built with spawn(...).",
+          "since": 1
+        },
+        {
+          "symbol": "room.commands",
+          "name": "commands",
+          "type": "dict[str, function]",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "{}",
+          "allowed_values": [],
+          "doc": "Room-local commands mapping verb name to fn(ctx).",
+          "since": 1
+        },
+        {
+          "symbol": "room.hooks",
+          "name": "hooks",
+          "type": "dict[str, function]",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "{}",
+          "allowed_values": [],
+          "doc": "Custom hooks, by name, run with ctx.call_hook.",
+          "since": 1
+        },
+        {
+          "symbol": "room.modifiers",
+          "name": "modifiers",
+          "type": "dict[str, function]",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "{}",
+          "allowed_values": [
+            "to_hit",
+            "damage",
+            "bonus_damage",
+            "defend_hit",
+            "receive_damage",
+            "mitigate",
+            "initiative",
+            "cast_allowed",
+            "move_cost",
+            "move_pace",
+            "regen",
+            "advance_lag",
+            "retreat_lag",
+            "retreat_fail_lag",
+            "flee_fail_lag",
+            "skill_check",
+            "skill_power",
+            "item_power"
+          ],
+          "doc": "Room rules modifiers by modifier point name.",
+          "since": 1
+        },
+        {
+          "symbol": "room.version",
+          "name": "version",
+          "type": "int",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "1",
+          "allowed_values": [],
+          "doc": "Prototype schema version for persisted state migration.",
+          "since": 1
+        }
+      ]
+    },
+    {
+      "symbol": "skill",
+      "feature": "skills",
+      "name": "skill",
+      "doc": "Declares a skill or spell.",
+      "hook_owner": null,
+      "extra_keywords": false,
+      "since": 1,
+      "params": [
+        {
+          "symbol": "skill.id",
+          "feature": "skills",
+          "name": "id",
+          "type": "str",
+          "positional": true,
+          "keyword": false,
+          "required": true,
+          "default": null,
+          "allowed_values": [],
+          "doc": "The skill's declaration name within the package.",
+          "since": 1
+        },
+        {
+          "symbol": "skill.kind",
+          "feature": "skills",
+          "name": "kind",
+          "type": "str",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "'skill'",
+          "allowed_values": [],
+          "doc": "Skill category, such as 'spell' or 'skill'.",
+          "since": 1
+        },
+        {
+          "symbol": "skill.cost",
+          "feature": "skills",
+          "name": "cost",
+          "type": "vitals",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "vitals()",
+          "allowed_values": [],
+          "doc": "Vitals spent on cast, built with vitals(...).",
+          "since": 1
+        },
+        {
+          "symbol": "skill.warmup",
+          "feature": "skills",
+          "name": "warmup",
+          "type": "int",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "0",
+          "allowed_values": [],
+          "doc": "Pulses of casting warmup before the skill resolves.",
+          "since": 1
+        },
+        {
+          "symbol": "skill.lag",
+          "feature": "skills",
+          "name": "lag",
+          "type": "int",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "0",
+          "allowed_values": [],
+          "doc": "Recovery wait-state pulses after the skill resolves.",
+          "since": 1
+        },
+        {
+          "symbol": "skill.range",
+          "feature": "skills",
+          "name": "range",
+          "type": "str",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "'melee'",
+          "allowed_values": [
+            "melee",
+            "near",
+            "far",
+            "self",
+            "room"
+          ],
+          "doc": "Maximum target range.",
+          "since": 1
+        },
+        {
+          "symbol": "skill.target",
+          "feature": "skills",
+          "name": "target",
+          "type": "str",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "'enemy'",
+          "allowed_values": [
+            "enemy",
+            "ally",
+            "self",
+            "item",
+            "none",
+            "room"
+          ],
+          "doc": "Kind of target the skill accepts.",
+          "since": 1
+        },
+        {
+          "symbol": "skill.channels",
+          "feature": "skills",
+          "name": "channels",
+          "type": "list[str]",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "[]",
+          "allowed_values": [],
+          "doc": "Channels required and emitted when casting.",
+          "since": 1
+        },
+        {
+          "symbol": "skill.interrupt",
+          "feature": "skills",
+          "name": "interrupt",
+          "type": "dict[str, any]",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "{'damage_pct': None, 'stun': True}",
+          "allowed_values": [
+            "damage_pct",
+            "stun"
+          ],
+          "doc": "Warmup interruption rules ('damage_pct', 'stun').",
+          "since": 1
+        },
+        {
+          "symbol": "skill.attack_while_casting",
+          "feature": "skills",
+          "name": "attack_while_casting",
+          "type": "bool",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "False",
+          "allowed_values": [],
+          "doc": "True if auto-attacks continue during warmup.",
+          "since": 1
+        },
+        {
+          "symbol": "skill.effect",
+          "feature": "skills",
+          "name": "effect",
+          "type": "effect",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "None",
+          "allowed_values": [],
+          "doc": "Declarative effect primitive applied when the skill resolves.",
+          "since": 1
+        },
+        {
+          "symbol": "skill.resolve",
+          "feature": "skills",
+          "name": "resolve",
+          "type": "function",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "None",
+          "allowed_values": [],
+          "doc": "Custom function fn(ctx) run when the skill resolves.",
+          "since": 1
+        },
+        {
+          "symbol": "skill.tags",
+          "feature": "skills",
+          "name": "tags",
+          "type": "list[str]",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "[]",
+          "allowed_values": [],
+          "doc": "Tags for plugin restrictions and scripts.",
+          "since": 1
+        },
+        {
+          "symbol": "skill.unrecognized",
+          "feature": "skills",
+          "name": "unrecognized",
+          "type": "dict[str, str]",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "{}",
+          "allowed_values": [],
+          "doc": "Lines for players who don't recognize the skill: begin, room, victim, resisted_room, resisted_victim, noun.",
+          "since": 1
+        }
+      ]
+    },
+    {
+      "symbol": "spawn",
+      "name": "spawn",
+      "doc": "A spawn rule, for room(spawns=[...]).",
+      "hook_owner": null,
+      "extra_keywords": false,
+      "since": 1,
+      "params": [
+        {
+          "symbol": "spawn.label",
+          "name": "label",
+          "type": "label",
+          "positional": true,
+          "keyword": false,
+          "required": true,
+          "default": null,
+          "allowed_values": [],
+          "doc": "Mob prototype label to spawn.",
+          "since": 1
+        },
+        {
+          "symbol": "spawn.count",
+          "name": "count",
+          "type": "int",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "1",
+          "allowed_values": [],
+          "doc": "Maximum number of instances maintained by this rule.",
+          "since": 1
+        },
+        {
+          "symbol": "spawn.respawn_pulses",
+          "name": "respawn_pulses",
+          "type": "int",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "1200",
+          "allowed_values": [],
+          "doc": "Pulses before a slain mob respawns.",
+          "since": 1
+        },
+        {
+          "symbol": "spawn.at_index",
+          "feature": "track",
+          "name": "at_index",
+          "type": "int",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "0",
+          "allowed_values": [],
+          "doc": "Track index in the room where the mob spawns.",
+          "since": 1
+        }
+      ]
+    }
+  ],
+  "effects": [
+    {
+      "symbol": "apply_affect",
+      "name": "apply_affect",
+      "doc": "Attach a timed buff or debuff.",
+      "since": 1,
+      "params": [
+        {
+          "symbol": "apply_affect.name",
+          "name": "name",
+          "positional": true,
+          "named": true,
+          "default": null,
+          "varargs": false,
+          "kwargs": false,
+          "doc": "Affect name; applying the same name again replaces the existing affect."
+        },
+        {
+          "symbol": "apply_affect.duration",
+          "name": "duration",
+          "positional": true,
+          "named": true,
+          "default": null,
+          "varargs": false,
+          "kwargs": false,
+          "doc": "Duration in pulses; None makes an item affect permanent."
+        },
+        {
+          "symbol": "apply_affect.stat_deltas",
+          "name": "stat_deltas",
+          "positional": true,
+          "named": true,
+          "default": "None",
+          "varargs": false,
+          "kwargs": false,
+          "doc": "Stat adjustments while the affect lasts, built with stats(...)."
+        },
+        {
+          "symbol": "apply_affect.flags",
+          "name": "flags",
+          "positional": true,
+          "named": true,
+          "default": "[]",
+          "varargs": false,
+          "kwargs": false,
+          "doc": "Flags the affect grants, such as 'no_regen'."
+        },
+        {
+          "symbol": "apply_affect.tick_every",
+          "name": "tick_every",
+          "positional": true,
+          "named": true,
+          "default": "None",
+          "varargs": false,
+          "kwargs": false,
+          "doc": "Pulses between on_tick calls, or None for no ticking."
+        },
+        {
+          "symbol": "apply_affect.on_tick",
+          "name": "on_tick",
+          "positional": true,
+          "named": true,
+          "default": "None",
+          "varargs": false,
+          "kwargs": false,
+          "doc": "Top-level function fn(ctx) called every tick_every pulses."
+        },
+        {
+          "symbol": "apply_affect.on_expire",
+          "name": "on_expire",
+          "positional": true,
+          "named": true,
+          "default": "None",
+          "varargs": false,
+          "kwargs": false,
+          "doc": "Top-level function fn(ctx) called when the affect expires or is removed."
+        },
+        {
+          "symbol": "apply_affect.expire_msg",
+          "name": "expire_msg",
+          "positional": true,
+          "named": true,
+          "default": "''",
+          "varargs": false,
+          "kwargs": false,
+          "doc": "Text sent to the target when the affect ends."
+        },
+        {
+          "symbol": "apply_affect.modifiers",
+          "name": "modifiers",
+          "positional": true,
+          "named": true,
+          "default": "{}",
+          "varargs": false,
+          "kwargs": false,
+          "doc": "Rules modifiers active while the affect lasts, by modifier point name."
+        },
+        {
+          "symbol": "apply_affect.sense_deltas",
+          "name": "sense_deltas",
+          "positional": true,
+          "named": true,
+          "default": "{}",
+          "varargs": false,
+          "kwargs": false,
+          "doc": "Sense score changes by channel while the affect lasts."
+        },
+        {
+          "symbol": "apply_affect.max_vital_deltas",
+          "name": "max_vital_deltas",
+          "positional": true,
+          "named": true,
+          "default": "None",
+          "varargs": false,
+          "kwargs": false,
+          "doc": "Vital maximum adjustments while the affect lasts, built with vitals(...)."
+        },
+        {
+          "symbol": "apply_affect.resist_deltas",
+          "name": "resist_deltas",
+          "positional": true,
+          "named": true,
+          "default": "None",
+          "varargs": false,
+          "kwargs": false,
+          "doc": "Damage resistance adjustments while the affect lasts, built with resists(...)."
+        },
+        {
+          "symbol": "apply_affect.applies",
+          "name": "applies",
+          "positional": true,
+          "named": true,
+          "default": "None",
+          "varargs": false,
+          "kwargs": false,
+          "doc": "Item affects only: 'worn' or 'carried'."
+        },
+        {
+          "symbol": "apply_affect.procs",
+          "feature": "combat",
+          "name": "procs",
+          "positional": true,
+          "named": true,
+          "default": "[]",
+          "varargs": false,
+          "kwargs": false,
+          "doc": "Combat procs that fire during auto-attack swings."
+        },
+        {
+          "symbol": "apply_affect.add_tags",
+          "name": "add_tags",
+          "positional": true,
+          "named": true,
+          "default": "[]",
+          "varargs": false,
+          "kwargs": false,
+          "doc": "Tags a room gains while the affect lasts; a room affect only."
+        },
+        {
+          "symbol": "apply_affect.remove_tags",
+          "name": "remove_tags",
+          "positional": true,
+          "named": true,
+          "default": "[]",
+          "varargs": false,
+          "kwargs": false,
+          "doc": "Tags a room loses while the affect lasts; a room affect only."
+        }
+      ]
+    },
+    {
+      "symbol": "damage",
+      "name": "damage",
+      "doc": "Deal damage.",
+      "since": 1,
+      "params": [
+        {
+          "symbol": "damage.dice",
+          "name": "dice",
+          "positional": true,
+          "named": true,
+          "default": null,
+          "varargs": false,
+          "kwargs": false,
+          "doc": "Damage dice such as '2d6+1'."
+        },
+        {
+          "symbol": "damage.type",
+          "name": "type",
+          "positional": true,
+          "named": true,
+          "default": "None",
+          "varargs": false,
+          "kwargs": false,
+          "doc": "A declared damage type, such as DAMAGE.fire; the unarmed type if omitted."
+        }
+      ]
+    },
+    {
+      "symbol": "dispel",
+      "name": "dispel",
+      "doc": "Remove the target's affects that match every given criterion. Affects flagged 'intrinsic' are never removed.",
+      "since": 1,
+      "params": [
+        {
+          "symbol": "dispel.name",
+          "name": "name",
+          "positional": true,
+          "named": true,
+          "default": "None",
+          "varargs": false,
+          "kwargs": false,
+          "doc": "Affect name to remove; a trailing * matches every name with that prefix."
+        },
+        {
+          "symbol": "dispel.flag",
+          "name": "flag",
+          "positional": true,
+          "named": true,
+          "default": "None",
+          "varargs": false,
+          "kwargs": false,
+          "doc": "A flag, or a list of flags; matches affects carrying any of them."
+        },
+        {
+          "symbol": "dispel.all",
+          "name": "all",
+          "positional": true,
+          "named": true,
+          "default": "False",
+          "varargs": false,
+          "kwargs": false,
+          "doc": "True to match every affect."
+        },
+        {
+          "symbol": "dispel.count",
+          "name": "count",
+          "positional": true,
+          "named": true,
+          "default": "None",
+          "varargs": false,
+          "kwargs": false,
+          "doc": "Most affects to remove, oldest first, or None to remove every match."
+        }
+      ]
+    },
+    {
+      "symbol": "heal",
+      "name": "heal",
+      "doc": "Restore a vital, up to its maximum.",
+      "since": 1,
+      "params": [
+        {
+          "symbol": "heal.dice",
+          "name": "dice",
+          "positional": true,
+          "named": true,
+          "default": null,
+          "varargs": false,
+          "kwargs": false,
+          "doc": "Amount restored, as dice such as '2d4'."
+        },
+        {
+          "symbol": "heal.vital",
+          "name": "vital",
+          "positional": true,
+          "named": true,
+          "default": null,
+          "varargs": false,
+          "kwargs": false,
+          "doc": "The declared vital to restore."
+        }
+      ]
+    },
+    {
+      "symbol": "knockback",
+      "feature": "track",
+      "name": "knockback",
+      "doc": "Push the target along the track.",
+      "since": 1,
+      "params": [
+        {
+          "symbol": "knockback.steps",
+          "feature": "track",
+          "name": "steps",
+          "positional": true,
+          "named": true,
+          "default": null,
+          "varargs": false,
+          "kwargs": false,
+          "doc": "Track positions to push the target, at least 1."
+        }
+      ]
+    },
+    {
+      "symbol": "pull",
+      "feature": "track",
+      "name": "pull",
+      "doc": "Draw the target along the track.",
+      "since": 1,
+      "params": [
+        {
+          "symbol": "pull.steps",
+          "feature": "track",
+          "name": "steps",
+          "positional": true,
+          "named": true,
+          "default": null,
+          "varargs": false,
+          "kwargs": false,
+          "doc": "Track positions to draw the target, at least 1."
+        }
+      ]
+    },
+    {
+      "symbol": "sequence",
+      "name": "sequence",
+      "doc": "Combine several effects.",
+      "since": 1,
+      "params": [
+        {
+          "symbol": "sequence.effects",
+          "name": "effects",
+          "positional": true,
+          "named": false,
+          "default": null,
+          "varargs": true,
+          "kwargs": false,
+          "doc": "Effects applied in order."
+        }
+      ]
+    },
+    {
+      "symbol": "stun",
+      "name": "stun",
+      "doc": "Stun the target.",
+      "since": 1,
+      "params": [
+        {
+          "symbol": "stun.pulses",
+          "name": "pulses",
+          "positional": true,
+          "named": true,
+          "default": null,
+          "varargs": false,
+          "kwargs": false,
+          "doc": "Pulses the target is stunned, at least 1."
+        }
+      ]
+    },
+    {
+      "symbol": "summon",
+      "name": "summon",
+      "doc": "Spawn mobs beside the caster.",
+      "since": 1,
+      "params": [
+        {
+          "symbol": "summon.label",
+          "name": "label",
+          "positional": true,
+          "named": true,
+          "default": null,
+          "varargs": false,
+          "kwargs": false,
+          "doc": "Mob prototype label to spawn."
+        },
+        {
+          "symbol": "summon.count",
+          "name": "count",
+          "positional": true,
+          "named": true,
+          "default": "1",
+          "varargs": false,
+          "kwargs": false,
+          "doc": "Number of mobs to spawn, at least 1."
+        },
+        {
+          "symbol": "summon.duration",
+          "name": "duration",
+          "positional": true,
+          "named": true,
+          "default": "None",
+          "varargs": false,
+          "kwargs": false,
+          "doc": "Pulses before the summoned mobs vanish, or None to keep them."
+        }
+      ]
+    }
+  ],
+  "behaviors": [
+    {
+      "symbol": "aggressive",
+      "feature": "combat",
+      "name": "aggressive",
+      "doc": "Behavior: attacks matching actors it notices. toward is 'players', 'mobs', 'all' or label patterns.",
+      "since": 1,
+      "params": [
+        {
+          "symbol": "aggressive.toward",
+          "feature": "combat",
+          "name": "toward",
+          "positional": true,
+          "named": true,
+          "default": "'players'",
+          "varargs": false,
+          "kwargs": false,
+          "doc": "Who to attack: 'players', 'mobs', 'all', or label patterns such as 'goblin_*'."
+        },
+        {
+          "symbol": "aggressive.unless_level_above",
+          "feature": "leveling",
+          "name": "unless_level_above",
+          "positional": true,
+          "named": true,
+          "default": "None",
+          "varargs": false,
+          "kwargs": false,
+          "doc": "Spare actors above this level, or None to attack any level."
+        },
+        {
+          "symbol": "aggressive.unless_level_below",
+          "feature": "leveling",
+          "name": "unless_level_below",
+          "positional": true,
+          "named": true,
+          "default": "None",
+          "varargs": false,
+          "kwargs": false,
+          "doc": "Spare actors below this level, or None to attack any level."
+        },
+        {
+          "symbol": "aggressive.chance",
+          "feature": "combat",
+          "name": "chance",
+          "positional": true,
+          "named": true,
+          "default": "100",
+          "varargs": false,
+          "kwargs": false,
+          "doc": "Percent chance of looking for a target on each think, 0 to 100."
+        },
+        {
+          "symbol": "aggressive.disposition_below",
+          "feature": "standing",
+          "name": "disposition_below",
+          "positional": true,
+          "named": true,
+          "default": "None",
+          "varargs": false,
+          "kwargs": false,
+          "doc": "Attack only targets whose disposition is strictly below this threshold (-100..100)."
+        },
+        {
+          "symbol": "aggressive.prefer",
+          "feature": "combat",
+          "name": "prefer",
+          "positional": true,
+          "named": true,
+          "default": "None",
+          "varargs": false,
+          "kwargs": false,
+          "doc": "Plain data passed to the world's target_order; None chooses as described."
+        },
+        {
+          "symbol": "aggressive.priority",
+          "feature": "combat",
+          "name": "priority",
+          "positional": true,
+          "named": true,
+          "default": "None",
+          "varargs": false,
+          "kwargs": false,
+          "doc": "Proposal priority; higher wins. None uses the behavior's default."
+        }
+      ]
+    },
+    {
+      "symbol": "assist",
+      "feature": "combat",
+      "name": "assist",
+      "doc": "Behavior: joins fights alongside allies, given as label patterns such as 'goblin_*'.",
+      "since": 1,
+      "params": [
+        {
+          "symbol": "assist.allies",
+          "feature": "combat",
+          "name": "allies",
+          "positional": true,
+          "named": true,
+          "default": null,
+          "varargs": false,
+          "kwargs": false,
+          "doc": "Allies to help, as label patterns such as 'goblin_*'."
+        },
+        {
+          "symbol": "assist.disposition_above",
+          "feature": "standing",
+          "name": "disposition_above",
+          "positional": true,
+          "named": true,
+          "default": "None",
+          "varargs": false,
+          "kwargs": false,
+          "doc": "Help allies and spare opponents whose disposition is strictly above this threshold (-100..100)."
+        },
+        {
+          "symbol": "assist.prefer",
+          "feature": "combat",
+          "name": "prefer",
+          "positional": true,
+          "named": true,
+          "default": "None",
+          "varargs": false,
+          "kwargs": false,
+          "doc": "Plain data passed to the world's target_order; None chooses as described."
+        },
+        {
+          "symbol": "assist.priority",
+          "feature": "combat",
+          "name": "priority",
+          "positional": true,
+          "named": true,
+          "default": "None",
+          "varargs": false,
+          "kwargs": false,
+          "doc": "Proposal priority; higher wins. None uses the behavior's default."
+        }
+      ]
+    },
+    {
+      "symbol": "defend",
+      "feature": "combat",
+      "name": "defend",
+      "doc": "Behavior: attacks whatever its owner is fighting; with group, whatever the owner's in-room group members are fighting.",
+      "since": 1,
+      "params": [
+        {
+          "symbol": "defend.group",
+          "feature": "combat",
+          "name": "group",
+          "positional": true,
+          "named": true,
+          "default": "True",
+          "varargs": false,
+          "kwargs": false,
+          "doc": "Also defend the owner's in-room group members."
+        },
+        {
+          "symbol": "defend.priority",
+          "feature": "combat",
+          "name": "priority",
+          "positional": true,
+          "named": true,
+          "default": "None",
+          "varargs": false,
+          "kwargs": false,
+          "doc": "Proposal priority; higher wins. None uses the behavior's default."
+        }
+      ]
+    },
+    {
+      "symbol": "flee",
+      "feature": "combat",
+      "name": "flee",
+      "doc": "Behavior: flees when any listed vital is at or below its percentage of its maximum.",
+      "since": 1,
+      "params": [
+        {
+          "symbol": "flee.below",
+          "feature": "combat",
+          "name": "below",
+          "positional": true,
+          "named": true,
+          "default": null,
+          "varargs": false,
+          "kwargs": false,
+          "doc": "Percentages (0..100) by vital, built with vitals(...)."
+        },
+        {
+          "symbol": "flee.priority",
+          "feature": "combat",
+          "name": "priority",
+          "positional": true,
+          "named": true,
+          "default": "None",
+          "varargs": false,
+          "kwargs": false,
+          "doc": "Proposal priority; higher wins. None uses the behavior's default."
+        }
+      ]
+    },
+    {
+      "symbol": "follow",
+      "name": "follow",
+      "doc": "Behavior: follows the first matching actor it meets ('players', 'mobs' or label patterns).",
+      "since": 1,
+      "params": [
+        {
+          "symbol": "follow.target",
+          "name": "target",
+          "positional": true,
+          "named": true,
+          "default": null,
+          "varargs": false,
+          "kwargs": false,
+          "doc": "Who to follow: 'players', 'mobs', or label patterns."
+        },
+        {
+          "symbol": "follow.disposition_above",
+          "feature": "standing",
+          "name": "disposition_above",
+          "positional": true,
+          "named": true,
+          "default": "None",
+          "varargs": false,
+          "kwargs": false,
+          "doc": "Follow only leaders whose disposition is strictly above this threshold (-100..100)."
+        },
+        {
+          "symbol": "follow.priority",
+          "name": "priority",
+          "positional": true,
+          "named": true,
+          "default": "None",
+          "varargs": false,
+          "kwargs": false,
+          "doc": "Proposal priority; higher wins. None uses the behavior's default."
+        }
+      ]
+    },
+    {
+      "symbol": "guard",
+      "name": "guard",
+      "doc": "Behavior: denies an exit to everyone who isn't an ally (default: other mobs) while the guard is present.",
+      "since": 1,
+      "params": [
+        {
+          "symbol": "guard.exit",
+          "name": "exit",
+          "positional": true,
+          "named": true,
+          "default": null,
+          "varargs": false,
+          "kwargs": false,
+          "doc": "Direction of the exit to guard."
+        },
+        {
+          "symbol": "guard.allies",
+          "name": "allies",
+          "positional": true,
+          "named": true,
+          "default": "'mobs'",
+          "varargs": false,
+          "kwargs": false,
+          "doc": "Who may pass: 'players', 'mobs', 'all', or label patterns."
+        },
+        {
+          "symbol": "guard.disposition_above",
+          "feature": "standing",
+          "name": "disposition_above",
+          "positional": true,
+          "named": true,
+          "default": "None",
+          "varargs": false,
+          "kwargs": false,
+          "doc": "Actors whose disposition is strictly above this threshold (-100..100) are allowed through."
+        }
+      ]
+    },
+    {
+      "symbol": "heel",
+      "name": "heel",
+      "doc": "Behavior: follows its owner by the shortest path, however far. Does nothing for a mob without an owner in the world.",
+      "since": 1,
+      "params": [
+        {
+          "symbol": "heel.priority",
+          "name": "priority",
+          "positional": true,
+          "named": true,
+          "default": "None",
+          "varargs": false,
+          "kwargs": false,
+          "doc": "Proposal priority; higher wins. None uses the behavior's default."
+        }
+      ]
+    },
+    {
+      "symbol": "pursue",
+      "name": "pursue",
+      "doc": "Behavior: heads for the nearest matching actor within range exits.",
+      "since": 1,
+      "params": [
+        {
+          "symbol": "pursue.target",
+          "name": "target",
+          "positional": true,
+          "named": true,
+          "default": null,
+          "varargs": false,
+          "kwargs": false,
+          "doc": "Who to pursue: 'players', 'mobs', or label patterns."
+        },
+        {
+          "symbol": "pursue.disposition_below",
+          "feature": "standing",
+          "name": "disposition_below",
+          "positional": true,
+          "named": true,
+          "default": "None",
+          "varargs": false,
+          "kwargs": false,
+          "doc": "Pursue only targets whose disposition is strictly below this threshold (-100..100)."
+        },
+        {
+          "symbol": "pursue.priority",
+          "name": "priority",
+          "positional": true,
+          "named": true,
+          "default": "None",
+          "varargs": false,
+          "kwargs": false,
+          "doc": "Proposal priority; higher wins. None uses the behavior's default."
+        },
+        {
+          "symbol": "pursue.range",
+          "name": "range",
+          "positional": true,
+          "named": true,
+          "default": "10",
+          "varargs": false,
+          "kwargs": false,
+          "doc": "Exits searched from the mob's room; None searches the whole world."
+        }
+      ]
+    },
+    {
+      "symbol": "retarget",
+      "feature": "combat",
+      "name": "retarget",
+      "doc": "Behavior: while engaged, asks target_order whom to fight and switches to its pick if that is not the primary target.",
+      "since": 1,
+      "params": [
+        {
+          "symbol": "retarget.prefer",
+          "feature": "combat",
+          "name": "prefer",
+          "positional": true,
+          "named": true,
+          "default": "None",
+          "varargs": false,
+          "kwargs": false,
+          "doc": "Plain data passed to the world's target_order; required."
+        },
+        {
+          "symbol": "retarget.toward",
+          "feature": "combat",
+          "name": "toward",
+          "positional": true,
+          "named": true,
+          "default": "'players'",
+          "varargs": false,
+          "kwargs": false,
+          "doc": "Non-engaged actors in the room to consider: 'players', 'mobs', 'all', or label patterns."
+        },
+        {
+          "symbol": "retarget.disposition_below",
+          "feature": "standing",
+          "name": "disposition_below",
+          "positional": true,
+          "named": true,
+          "default": "None",
+          "varargs": false,
+          "kwargs": false,
+          "doc": "Consider only non-engaged targets whose disposition is strictly below this threshold (-100..100)."
+        },
+        {
+          "symbol": "retarget.chance",
+          "feature": "combat",
+          "name": "chance",
+          "positional": true,
+          "named": true,
+          "default": "100",
+          "varargs": false,
+          "kwargs": false,
+          "doc": "Percent chance of asking target_order on each think, 0 to 100."
+        },
+        {
+          "symbol": "retarget.priority",
+          "feature": "combat",
+          "name": "priority",
+          "positional": true,
+          "named": true,
+          "default": "None",
+          "varargs": false,
+          "kwargs": false,
+          "doc": "Proposal priority; higher wins. None uses the behavior's default."
+        }
+      ]
+    },
+    {
+      "symbol": "scavenge",
+      "name": "scavenge",
+      "doc": "Behavior: picks up items lying within reach.",
+      "since": 1,
+      "params": [
+        {
+          "symbol": "scavenge.priority",
+          "name": "priority",
+          "positional": true,
+          "named": true,
+          "default": "None",
+          "varargs": false,
+          "kwargs": false,
+          "doc": "Proposal priority; higher wins. None uses the behavior's default."
+        }
+      ]
+    },
+    {
+      "symbol": "sentinel",
+      "name": "sentinel",
+      "doc": "Behavior: never leaves its room.",
+      "since": 1,
+      "params": []
+    },
+    {
+      "symbol": "wander",
+      "name": "wander",
+      "doc": "Behavior: with a percent chance per think, steps through a random open exit within radius exits of home.",
+      "since": 1,
+      "params": [
+        {
+          "symbol": "wander.radius",
+          "name": "radius",
+          "positional": true,
+          "named": true,
+          "default": "3",
+          "varargs": false,
+          "kwargs": false,
+          "doc": "Maximum distance from home, in exits."
+        },
+        {
+          "symbol": "wander.chance",
+          "name": "chance",
+          "positional": true,
+          "named": true,
+          "default": "10",
+          "varargs": false,
+          "kwargs": false,
+          "doc": "Percent chance of taking a step on each think, 0 to 100."
+        },
+        {
+          "symbol": "wander.priority",
+          "name": "priority",
+          "positional": true,
+          "named": true,
+          "default": "None",
+          "varargs": false,
+          "kwargs": false,
+          "doc": "Proposal priority; higher wins. None uses the behavior's default."
+        }
+      ]
+    }
+  ],
+  "constants": [
+    {
+      "symbol": "DAMAGE",
+      "name": "DAMAGE",
+      "type": "struct",
+      "value": "struct()",
+      "doc": "A struct of the world's declared damage types, such as DAMAGE.fire; a misspelling fails at that line.",
+      "since": 1
+    },
+    {
+      "symbol": "DIR",
+      "name": "DIR",
+      "type": "struct",
+      "value": "struct(north = \"north\", east = \"east\", south = \"south\", west = \"west\", up = \"up\", down = \"down\", northeast = \"northeast\", northwest = \"northwest\", southeast = \"southeast\", southwest = \"southwest\")",
+      "doc": "Standard exit directions, such as DIR.north and DIR.west.",
+      "since": 1
+    },
+    {
+      "symbol": "DOOR",
+      "name": "DOOR",
+      "type": "struct",
+      "value": "struct(open = \"open\", closed = \"closed\", locked = \"locked\")",
+      "doc": "Door states: DOOR.open, DOOR.closed, DOOR.locked.",
+      "since": 1
+    },
+    {
+      "symbol": "MODIFIER",
+      "name": "MODIFIER",
+      "type": "struct",
+      "value": "struct(to_hit = \"to_hit\", damage = \"damage\", bonus_damage = \"bonus_damage\", defend_hit = \"defend_hit\", receive_damage = \"receive_damage\", mitigate = \"mitigate\", initiative = \"initiative\", cast_allowed = \"cast_allowed\", move_cost = \"move_cost\", move_pace = \"move_pace\", regen = \"regen\", advance_lag = \"advance_lag\", retreat_lag = \"retreat_lag\", retreat_fail_lag = \"retreat_fail_lag\", flee_fail_lag = \"flee_fail_lag\", skill_check = \"skill_check\", skill_power = \"skill_power\", item_power = \"item_power\")",
+      "doc": "Rules modifier points, such as MODIFIER.damage and MODIFIER.to_hit.",
+      "since": 1
+    },
+    {
+      "symbol": "SEMI_PERMANENT",
+      "name": "SEMI_PERMANENT",
+      "type": "int",
+      "value": "9223372036854775807",
+      "doc": "A duration (in pulses) that effectively never ends; accepted wherever a timed affect takes a duration.",
+      "since": 1
+    },
+    {
+      "symbol": "SENSE",
+      "name": "SENSE",
+      "type": "struct",
+      "value": "struct(sight = \"sight\", sound = \"sound\", all = [\"sight\", \"sound\"])",
+      "doc": "Perception senses (SENSE.sight, SENSE.sound, declared senses) and SENSE.all.",
+      "since": 1
+    },
+    {
+      "symbol": "SIZE",
+      "feature": "track",
+      "name": "SIZE",
+      "type": "struct",
+      "value": "struct(cramped = \"cramped\", normal = \"normal\", large = \"large\")",
+      "doc": "Track size constants for rooms: SIZE.cramped, SIZE.normal, SIZE.large.",
+      "since": 1
+    }
+  ]
+}

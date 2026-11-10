@@ -1,0 +1,18 @@
+{
+  "title": "The Manor House",
+  "theme": "a creepy abandoned manor",
+  "style_notes": "cold stone, dust, old family portraits that seem to follow you",
+  "room_count": {"min": 8, "max": 15},
+  "room_concepts": [
+    "a grand entrance hall",
+    "a cold kitchen",
+    "a study full of ledgers",
+    "a library",
+    "a parlour",
+    "the master bedroom",
+    "an old nursery",
+    "a guest bedroom",
+    "a dark cellar"
+  ],
+  "link_to": null
+}

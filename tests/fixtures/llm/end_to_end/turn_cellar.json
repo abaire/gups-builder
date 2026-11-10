@@ -1,0 +1,8 @@
+{
+  "kind": "edit",
+  "reply": "Added a wine cellar under the kitchen, beside the dark cellar.",
+  "edits": [
+    {"edit": "add_room", "id": "wine_cellar", "concept": "a wine cellar", "at": {"x": 1, "y": 0, "z": -1}, "size": "normal", "tags": []},
+    {"edit": "connect", "a": "kitchen", "b": "wine_cellar"}
+  ]
+}

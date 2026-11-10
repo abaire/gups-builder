@@ -1,0 +1,14 @@
+{
+  "rooms": [
+    {"id": "hall", "concept": "a grand entrance hall", "at": {"x": 0, "y": 0, "z": 0}, "size": "large", "tags": []},
+    {"id": "nursery", "concept": "an old nursery", "at": {"x": 1, "y": 1, "z": 1}, "size": "normal", "tags": []}
+  ],
+  "connections": [
+    {"a": "hall", "b": "nursery"}
+  ],
+  "portals": [],
+  "keys": [],
+  "entry": "hall",
+  "link": null,
+  "todos": []
+}

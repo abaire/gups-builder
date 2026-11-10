@@ -1,0 +1,7 @@
+{
+  "kind": "edit",
+  "reply": "Put a closed door between the vault and the hall.",
+  "edits": [
+    {"edit": "set_door", "a": "vault", "b": "hall", "door": {"state": "closed", "tags": []}}
+  ]
+}

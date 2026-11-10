@@ -1,0 +1,7 @@
+{
+  "kind": "edit",
+  "reply": "Removed the study.",
+  "edits": [
+    {"edit": "remove_room", "id": "study"}
+  ]
+}

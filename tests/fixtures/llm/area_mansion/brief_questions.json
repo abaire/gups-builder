@@ -1,0 +1,9 @@
+{
+  "title": "The Manor House",
+  "theme": "a creepy abandoned manor",
+  "style_notes": "cold stone, dust",
+  "room_count": {"min": 4, "max": 8},
+  "room_concepts": ["a grand entrance hall"],
+  "link_to": null,
+  "questions": ["How many floors should the manor have?"]
+}

@@ -1,0 +1,11 @@
+{
+  "kind": "edit",
+  "reply": "Changed the zap.",
+  "edits": [
+    {
+      "edit": "set_effect",
+      "id": "zap",
+      "effect": {"primitive": "flame", "args": {}}
+    }
+  ]
+}

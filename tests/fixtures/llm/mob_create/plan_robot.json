@@ -1,0 +1,15 @@
+{
+  "mobs": [
+    {
+      "id": "sentinel_bot",
+      "concept": "a sentinel robot",
+      "level": null,
+      "stats": {"str": 10},
+      "vitals": {"integrity": 100, "power": 20},
+      "behaviors": [],
+      "loot": [],
+      "spawns": [],
+      "todos": []
+    }
+  ]
+}

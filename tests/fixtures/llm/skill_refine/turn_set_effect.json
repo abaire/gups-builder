@@ -1,0 +1,11 @@
+{
+  "kind": "edit",
+  "reply": "The spark hits harder now.",
+  "edits": [
+    {
+      "edit": "set_effect",
+      "id": "spark",
+      "effect": {"primitive": "damage", "args": {"dice": "3d4", "type": "fire"}}
+    }
+  ]
+}

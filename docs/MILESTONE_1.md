@@ -191,6 +191,7 @@ class Proposal:
     notes: list[str]                    # out-of-scope requests and TODOs, shown to the user
     grid: dict[str, tuple[int, int, int]] | None = None   # area mode: room id -> coordinate after the change
     link_ops: list[StarOp] = field(default_factory=list)  # edits to another package; applied only after the user confirms
+    link_package: str | None = None    # the package link_ops edit (added in the Phase 6–8 review)
 ```
 
 ---
@@ -1137,7 +1138,7 @@ def area_turn(ctx: Context, grid_coords: dict[str, Coord], message: str, history
 
 ```python
 class PendingChange(BaseModel):
-    ops: list[StarOp]; new_files: dict[str, str]; link_ops: list[StarOp] = []
+    ops: list[StarOp]; new_files: dict[str, str]; link_ops: list[StarOp] = []; link_package: str | None = None
     base_hashes: dict[str, str]          # hashes of the files the ops were built against
     summary: str; notes: list[str]
 

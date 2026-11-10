@@ -1,0 +1,8 @@
+{
+  "noun": "chilling touch",
+  "begin": "{actor}'s fingers gather a cold mist.",
+  "room": null,
+  "victim": "{actor}'s chilling touch seeps into you!",
+  "resisted_room": null,
+  "resisted_victim": "Your cold wards hold against {actor}'s chilling touch."
+}

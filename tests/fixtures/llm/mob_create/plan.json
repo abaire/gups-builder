@@ -1,0 +1,36 @@
+{
+  "mobs": [
+    {
+      "id": "goblin",
+      "concept": "a goblin",
+      "level": 3,
+      "stats": {"str": 10, "dex": 12},
+      "vitals": {"hp": 30},
+      "resists": {},
+      "skills": {},
+      "senses": {},
+      "behaviors": [{"name": "wander", "args": {}}],
+      "factions": [],
+      "traits": [],
+      "loot": [{"item": "goblin_idol", "chance": 10, "concept": "a carved wooden totem", "kind": "misc"}],
+      "spawns": [{"room": "hall", "count": 2, "respawn_pulses": null}],
+      "todos": []
+    },
+    {
+      "id": "goblin_shaman",
+      "concept": "a goblin shaman",
+      "level": 5,
+      "stats": {"int": 14},
+      "vitals": {"hp": 20, "mana": 30},
+      "resists": {},
+      "skills": {"//zones/tutorial:fireball": 40},
+      "senses": {},
+      "behaviors": [{"name": "wander", "args": {}}],
+      "factions": [],
+      "traits": [],
+      "loot": [],
+      "spawns": [],
+      "todos": []
+    }
+  ]
+}

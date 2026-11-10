@@ -1,0 +1,16 @@
+{
+  "id": "strike",
+  "concept": "a melee maneuver that shoves the enemy off the track",
+  "kind": "maneuver",
+  "cost": {},
+  "warmup": 0,
+  "lag": 2,
+  "range": "melee",
+  "target": "enemy",
+  "channels": [],
+  "tags": ["white"],
+  "interrupt": {},
+  "effect": {"primitive": "knockback", "args": {"steps": 2}},
+  "teach": [],
+  "todos": []
+}

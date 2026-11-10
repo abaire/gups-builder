@@ -1,0 +1,11 @@
+{
+  "kind": "edit",
+  "reply": "The spark costs more mana now.",
+  "edits": [
+    {
+      "edit": "set_skill",
+      "id": "spark",
+      "fields": {"cost": {"$call": "vitals", "args": [], "kwargs": {"mana": 10}}}
+    }
+  ]
+}

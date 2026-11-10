@@ -1,0 +1,8 @@
+{
+  "kind": "edit",
+  "reply": "Locked the way from the study to the kitchen.",
+  "edits": [
+    {"edit": "set_door", "a": "study", "b": "kitchen", "door": {"state": "locked", "key": "study_key", "tags": []}},
+    {"edit": "add_key", "id": "study_key", "concept": "a key for the study door"}
+  ]
+}

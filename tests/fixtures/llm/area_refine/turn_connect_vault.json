@@ -1,0 +1,7 @@
+{
+  "kind": "edit",
+  "reply": "Connected the vault to the hall.",
+  "edits": [
+    {"edit": "connect", "a": "vault", "b": "hall"}
+  ]
+}

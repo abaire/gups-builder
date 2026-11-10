@@ -1,0 +1,7 @@
+{
+  "kind": "edit",
+  "reply": "Made the shaman more ominous.",
+  "edits": [
+    {"edit": "rewrite", "ids": ["goblin_shaman"], "guidance": "more ominous"}
+  ]
+}

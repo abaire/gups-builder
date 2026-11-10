@@ -1,0 +1,111 @@
+{
+  "format": 1,
+  "api_version": 1,
+  "engine_version": "0.0.0-test",
+  "schema": {
+    "stats": [
+      {"name": "str", "label": "Strength"},
+      {"name": "dex", "label": "Dexterity"},
+      {"name": "con", "label": "Constitution"},
+      {"name": "int", "label": "Intelligence"},
+      {"name": "wis", "label": "Wisdom"},
+      {"name": "armor", "label": "Armor"}
+    ],
+    "vitals": [
+      {"name": "hp", "label": "Health"},
+      {"name": "mana", "label": "Mana"}
+    ],
+    "damage_types": [
+      {"name": "bludgeon", "label": "Bludgeon", "adjective": "crushing"},
+      {"name": "slash", "label": "Slash", "adjective": "slashing"},
+      {"name": "fire", "label": "Fire", "adjective": "fiery"}
+    ],
+    "unarmed_damage_type": "bludgeon",
+    "channels": ["sight", "smell", "sound", "spell"]
+  },
+  "features": ["combat", "leveling", "skills", "track"],
+  "commands": {"cast": "invoke"},
+  "packages": [
+    {"path": "zones/broken", "kind": null, "ok": false},
+    {"path": "zones/tutorial", "kind": "zone", "ok": true}
+  ],
+  "rooms": [
+    {
+      "label": "//zones/tutorial:hall",
+      "name": "The Hall",
+      "size": "large",
+      "regions": [],
+      "tags": ["underground"],
+      "flags": [],
+      "exits": [
+        {
+          "dir": "east",
+          "to": "//zones/tutorial:gate",
+          "one_way": false,
+          "tags": [],
+          "door": {"state": "locked", "key": "//zones/tutorial:brass_key", "tags": []}
+        }
+      ]
+    },
+    {
+      "label": "//zones/tutorial:gate",
+      "name": "The Gate",
+      "size": "normal",
+      "regions": [],
+      "tags": [],
+      "flags": ["dark"],
+      "exits": [
+        {"dir": "west", "to": "//zones/tutorial:hall", "one_way": false, "tags": [], "door": null}
+      ]
+    }
+  ],
+  "mobs": [
+    {
+      "label": "//zones/tutorial:guide",
+      "name": "the guide",
+      "keywords": ["guide"],
+      "level": 1,
+      "stats": {"str": 10, "int": 15},
+      "vitals": {"hp": 30, "mana": 10},
+      "resists": {"fire": -10},
+      "skills": {"//zones/tutorial:fireball": 40},
+      "traits": [],
+      "factions": null
+    }
+  ],
+  "items": [
+    {
+      "label": "//zones/tutorial:brass_key",
+      "name": "a brass key",
+      "keywords": ["key", "brass"],
+      "kind": "key",
+      "wear": null,
+      "weight": 1,
+      "value": 0
+    }
+  ],
+  "skills": [
+    {
+      "label": "//zones/tutorial:fireball",
+      "kind": "spell",
+      "target": "enemy",
+      "range": "near",
+      "cost": {"mana": 8},
+      "warmup": 0,
+      "lag": 4,
+      "channels": ["sound", "spell"],
+      "tags": []
+    }
+  ],
+  "factions": [],
+  "regions": [],
+  "plugins": [],
+  "errors": [
+    {
+      "package": "zones/broken",
+      "file": "//zones/broken:rooms.star",
+      "line": 12,
+      "message": "syntax error at 'x': expected expression"
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "kind": "edit",
+  "reply": "The kitchen door is already locked with the silver key.",
+  "edits": [
+    {"edit": "connect", "a": "hall", "b": "kitchen", "door": {"state": "locked", "key": "silver_key", "tags": []}}
+  ]
+}

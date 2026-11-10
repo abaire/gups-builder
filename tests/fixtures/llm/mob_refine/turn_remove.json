@@ -1,0 +1,7 @@
+{
+  "kind": "edit",
+  "reply": "Removed the goblin.",
+  "edits": [
+    {"edit": "remove_mob", "id": "goblin"}
+  ]
+}

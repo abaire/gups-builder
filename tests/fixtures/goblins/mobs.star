@@ -1,0 +1,21 @@
+mob("goblin",
+    name = "a goblin",
+    keywords = ["goblin"],
+    desc = "A wiry green creature with shifty yellow eyes.",
+    level = 3,
+    stats = stats(str = 10, dex = 12),
+    vitals = vitals(hp = 30),
+    behaviors = [wander()],
+    loot = [loot(":goblin_idol", chance = 10)],
+)
+
+mob("goblin_shaman",
+    name = "a goblin shaman",
+    keywords = ["goblin", "shaman"],
+    desc = "A hooded goblin who mutters to the spirits.",
+    level = 5,
+    stats = stats(int = 14),
+    vitals = vitals(hp = 20, mana = 30),
+    skills = {"//zones/tutorial:fireball": 40},
+    behaviors = [wander()],
+)

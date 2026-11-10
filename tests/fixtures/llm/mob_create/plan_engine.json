@@ -1,0 +1,27 @@
+{
+  "mobs": [
+    {
+      "id": "cave_goblin",
+      "concept": "a cave goblin",
+      "level": 3,
+      "stats": {"str": 10, "dex": 12},
+      "vitals": {"hp": 30},
+      "behaviors": [{"name": "wander", "args": {}}],
+      "loot": [{"item": "//zones/tutorial:brass_key", "chance": 100, "concept": null, "kind": "misc"}],
+      "spawns": [{"room": "cave", "count": 2, "respawn_pulses": null}],
+      "todos": []
+    },
+    {
+      "id": "cave_shaman",
+      "concept": "a cave shaman",
+      "level": 5,
+      "stats": {"int": 14},
+      "vitals": {"hp": 20, "mana": 30},
+      "skills": {"//skills/arcane:spark": 40},
+      "behaviors": [{"name": "wander", "args": {}}],
+      "loot": [],
+      "spawns": [],
+      "todos": []
+    }
+  ]
+}

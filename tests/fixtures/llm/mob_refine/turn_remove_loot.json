@@ -1,0 +1,7 @@
+{
+  "kind": "edit",
+  "reply": "The goblin drops nothing now.",
+  "edits": [
+    {"edit": "remove_loot", "id": "goblin", "item": "goblin_idol"}
+  ]
+}
