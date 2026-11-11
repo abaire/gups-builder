@@ -148,6 +148,34 @@ def _last_user(call_index: int, llm: FakeLlm) -> str:
     return [m.content for m in llm.calls[call_index][1] if m.role == "user"][-1]
 
 
+def _plan_repair(tmp_path: Path, world: WorldDescription, bad_plan: str, message: str) -> None:
+    """A creation whose faulty plan is repaired; the repair prompt names the fault."""
+    llm = FakeLlm(
+        {
+            "logic": [_load(CREATE, "brief.json"), bad_plan, _load(CREATE, "plan.json")],
+            "prose": [_load(CREATE, "prose.json"), _load(CREATE, "prose.json")],
+        }
+    )
+    ctx, _ = _ctx(tmp_path, llm, world)
+    proposal = create_skill(ctx, "a fire spell")
+    assert isinstance(proposal, Proposal)
+    assert message in _last_user(2, llm)
+
+
+def _prose_repair(tmp_path: Path, world: WorldDescription, bad_prose: str, message: str) -> None:
+    """A creation whose faulty prose line is repaired; the repair prompt names the fault."""
+    llm = FakeLlm(
+        {
+            "logic": [_load(CREATE, "brief.json"), _load(CREATE, "plan.json")],
+            "prose": [bad_prose, _load(CREATE, "prose.json")],
+        }
+    )
+    ctx, _ = _ctx(tmp_path, llm, world)
+    proposal = create_skill(ctx, "a fire spell")
+    assert isinstance(proposal, Proposal)
+    assert message in _last_user(3, llm)
+
+
 # -- creation ---------------------------------------------------------------
 
 
@@ -343,107 +371,65 @@ def test_range_near_is_rejected_when_track_is_off(
 
 
 def test_a_range_not_in_the_api_is_repaired(tmp_path: Path, world_min: WorldDescription) -> None:
-    llm = FakeLlm(
-        {
-            "logic": [
-                _load(CREATE, "brief.json"),
-                _plan_with(range="long"),
-                _load(CREATE, "plan.json"),
-            ],
-            "prose": [_load(CREATE, "prose.json"), _load(CREATE, "prose.json")],
-        }
+    _plan_repair(
+        tmp_path,
+        world_min,
+        _plan_with(range="long"),
+        "the range 'long' is not an allowed range",
     )
-    ctx, _ = _ctx(tmp_path, llm, world_min)
-    create_skill(ctx, "a fire spell")
-    assert "the range 'long' is not an allowed range" in _last_user(2, llm)
 
 
 def test_a_target_not_in_the_api_is_repaired(tmp_path: Path, world_min: WorldDescription) -> None:
-    llm = FakeLlm(
-        {
-            "logic": [
-                _load(CREATE, "brief.json"),
-                _plan_with(target="both"),
-                _load(CREATE, "plan.json"),
-            ],
-            "prose": [_load(CREATE, "prose.json"), _load(CREATE, "prose.json")],
-        }
+    _plan_repair(
+        tmp_path,
+        world_min,
+        _plan_with(target="both"),
+        "the target 'both' is not an allowed target",
     )
-    ctx, _ = _ctx(tmp_path, llm, world_min)
-    create_skill(ctx, "a fire spell")
-    assert "the target 'both' is not an allowed target" in _last_user(2, llm)
 
 
 def test_a_cost_vital_not_in_the_schema_is_repaired(
     tmp_path: Path, world_min: WorldDescription
 ) -> None:
-    llm = FakeLlm(
-        {
-            "logic": [
-                _load(CREATE, "brief.json"),
-                _plan_with(cost={"stamina": 10}),
-                _load(CREATE, "plan.json"),
-            ],
-            "prose": [_load(CREATE, "prose.json"), _load(CREATE, "prose.json")],
-        }
+    _plan_repair(
+        tmp_path,
+        world_min,
+        _plan_with(cost={"stamina": 10}),
+        "'stamina' is not a vital of this world's schema",
     )
-    ctx, _ = _ctx(tmp_path, llm, world_min)
-    create_skill(ctx, "a fire spell")
-    assert "'stamina' is not a vital of this world's schema" in _last_user(2, llm)
 
 
 def test_an_unknown_effect_primitive_is_repaired(
     tmp_path: Path, world_min: WorldDescription
 ) -> None:
-    llm = FakeLlm(
-        {
-            "logic": [
-                _load(CREATE, "brief.json"),
-                _plan_with(effect={"primitive": "flame", "args": {}}),
-                _load(CREATE, "plan.json"),
-            ],
-            "prose": [_load(CREATE, "prose.json"), _load(CREATE, "prose.json")],
-        }
+    _plan_repair(
+        tmp_path,
+        world_min,
+        _plan_with(effect={"primitive": "flame", "args": {}}),
+        "the effect 'flame' is not an effect of this world",
     )
-    ctx, _ = _ctx(tmp_path, llm, world_min)
-    create_skill(ctx, "a fire spell")
-    assert "the effect 'flame' is not an effect of this world" in _last_user(2, llm)
 
 
 def test_an_unknown_effect_argument_is_repaired(
     tmp_path: Path, world_min: WorldDescription
 ) -> None:
-    llm = FakeLlm(
-        {
-            "logic": [
-                _load(CREATE, "brief.json"),
-                _plan_with(effect={"primitive": "damage", "args": {"pow": 5}}),
-                _load(CREATE, "plan.json"),
-            ],
-            "prose": [_load(CREATE, "prose.json"), _load(CREATE, "prose.json")],
-        }
+    _plan_repair(
+        tmp_path,
+        world_min,
+        _plan_with(effect={"primitive": "damage", "args": {"pow": 5}}),
+        "the effect 'damage' has no argument 'pow'",
     )
-    ctx, _ = _ctx(tmp_path, llm, world_min)
-    create_skill(ctx, "a fire spell")
-    assert "the effect 'damage' has no argument 'pow'" in _last_user(2, llm)
 
 
 def test_a_sequence_without_effects_is_repaired(
     tmp_path: Path, world_min: WorldDescription
 ) -> None:
-    llm = FakeLlm(
-        {
-            "logic": [
-                _load(CREATE, "brief.json"),
-                _plan_with(effect={"primitive": "sequence", "args": {}, "effects": []}),
-                _load(CREATE, "plan.json"),
-            ],
-            "prose": [_load(CREATE, "prose.json"), _load(CREATE, "prose.json")],
-        }
+    _plan_repair(
+        tmp_path,
+        world_min,
+        _plan_with(effect={"primitive": "sequence", "args": {}, "effects": []}),
+        "the 'sequence' effect needs at least one effect",
     )
-    ctx, _ = _ctx(tmp_path, llm, world_min)
-    create_skill(ctx, "a fire spell")
-    assert "the 'sequence' effect needs at least one effect" in _last_user(2, llm)
 
 
 def test_effects_on_a_non_sequence_is_repaired(tmp_path: Path, world_min: WorldDescription) -> None:
@@ -528,53 +514,32 @@ def test_an_item_skill_with_heal_is_repaired(tmp_path: Path, world_min: WorldDes
 def test_a_damage_type_not_in_the_schema_is_repaired(
     tmp_path: Path, world_min: WorldDescription
 ) -> None:
-    llm = FakeLlm(
-        {
-            "logic": [
-                _load(CREATE, "brief.json"),
-                _plan_with(effect={"primitive": "damage", "args": {"dice": "2d4", "type": "cold"}}),
-                _load(CREATE, "plan.json"),
-            ],
-            "prose": [_load(CREATE, "prose.json"), _load(CREATE, "prose.json")],
-        }
+    _plan_repair(
+        tmp_path,
+        world_min,
+        _plan_with(effect={"primitive": "damage", "args": {"dice": "2d4", "type": "cold"}}),
+        "'cold' is not a damage type of this world's schema",
     )
-    ctx, _ = _ctx(tmp_path, llm, world_min)
-    create_skill(ctx, "a cold spell")
-    assert "'cold' is not a damage type of this world's schema" in _last_user(2, llm)
 
 
 def test_a_teach_of_an_unknown_mob_is_repaired(tmp_path: Path, world_min: WorldDescription) -> None:
-    llm = FakeLlm(
-        {
-            "logic": [
-                _load(CREATE, "brief.json"),
-                _plan_with(teach=[{"mob": "goblin", "proficiency": 30}]),
-                _load(CREATE, "plan.json"),
-            ],
-            "prose": [_load(CREATE, "prose.json"), _load(CREATE, "prose.json")],
-        }
+    _plan_repair(
+        tmp_path,
+        world_min,
+        _plan_with(teach=[{"mob": "goblin", "proficiency": 30}]),
+        "the teach names the unknown mob 'goblin'",
     )
-    ctx, _ = _ctx(tmp_path, llm, world_min)
-    create_skill(ctx, "a fire spell")
-    assert "the teach names the unknown mob 'goblin'" in _last_user(2, llm)
 
 
 def test_a_teach_of_a_mob_in_another_package_is_repaired(
     tmp_path: Path, world_min: WorldDescription
 ) -> None:
-    llm = FakeLlm(
-        {
-            "logic": [
-                _load(CREATE, "brief.json"),
-                _plan_with(teach=[{"mob": "//zones/other:chief", "proficiency": 30}]),
-                _load(CREATE, "plan.json"),
-            ],
-            "prose": [_load(CREATE, "prose.json"), _load(CREATE, "prose.json")],
-        }
+    _plan_repair(
+        tmp_path,
+        world_min,
+        _plan_with(teach=[{"mob": "//zones/other:chief", "proficiency": 30}]),
+        "is not a mob of this package",
     )
-    ctx, _ = _ctx(tmp_path, llm, world_min)
-    create_skill(ctx, "a fire spell")
-    assert "is not a mob of this package" in _last_user(2, llm)
 
 
 def test_a_teach_with_bad_proficiency_is_repaired(
@@ -619,20 +584,12 @@ def test_a_plugin_effect_is_accepted(tmp_path: Path, world_min: WorldDescription
 
 
 def test_an_unknown_plugin_effect_is_repaired(tmp_path: Path, world_min: WorldDescription) -> None:
-    world = _world_with_plugin(world_min)
-    llm = FakeLlm(
-        {
-            "logic": [
-                _load(CREATE, "brief.json"),
-                _plan_with(effect={"primitive": "nope.ember", "args": {}}),
-                _load(CREATE, "plan.json"),
-            ],
-            "prose": [_load(CREATE, "prose.json"), _load(CREATE, "prose.json")],
-        }
+    _plan_repair(
+        tmp_path,
+        _world_with_plugin(world_min),
+        _plan_with(effect={"primitive": "nope.ember", "args": {}}),
+        "the effect 'nope.ember' is not an effect of this world",
     )
-    ctx, _ = _ctx(tmp_path, llm, world)
-    create_skill(ctx, "a fire spell")
-    assert "the effect 'nope.ember' is not an effect of this world" in _last_user(2, llm)
 
 
 # -- the prose's extra check ---------------------------------------------------
@@ -642,44 +599,28 @@ def test_an_effect_argument_that_is_not_a_plain_value_is_repaired(
     tmp_path: Path, world_min: WorldDescription
 ) -> None:
     # The writer would refuse the whole declaration, so the plan is repaired first.
-    llm = FakeLlm(
-        {
-            "logic": [
-                _load(CREATE, "brief.json"),
-                _plan_with(
-                    effect={
-                        "primitive": "damage",
-                        "args": {"dice": {"$ref": "_spark_dice"}, "type": "fire"},
-                    }
-                ),
-                _load(CREATE, "plan.json"),
-            ],
-            "prose": [_load(CREATE, "prose.json")],
-        }
+    _plan_repair(
+        tmp_path,
+        world_min,
+        _plan_with(
+            effect={
+                "primitive": "damage",
+                "args": {"dice": {"$ref": "_spark_dice"}, "type": "fire"},
+            }
+        ),
+        "the effect 'damage' argument 'dice' must be a plain value",
     )
-    ctx, _ = _ctx(tmp_path, llm, world_min)
-    proposal = create_skill(ctx, "a fire spell")
-    assert isinstance(proposal, Proposal)
-    assert "the effect 'damage' argument 'dice' must be a plain value" in _last_user(2, llm)
 
 
 def test_an_interrupt_that_is_not_a_plain_value_is_repaired(
     tmp_path: Path, world_min: WorldDescription
 ) -> None:
-    llm = FakeLlm(
-        {
-            "logic": [
-                _load(CREATE, "brief.json"),
-                _plan_with(interrupt={"stun": {"$opaque": "_stuns()"}}),
-                _load(CREATE, "plan.json"),
-            ],
-            "prose": [_load(CREATE, "prose.json")],
-        }
+    _plan_repair(
+        tmp_path,
+        world_min,
+        _plan_with(interrupt={"stun": {"$opaque": "_stuns()"}}),
+        "the interrupt entry 'stun' must be a plain value",
     )
-    ctx, _ = _ctx(tmp_path, llm, world_min)
-    proposal = create_skill(ctx, "a fire spell")
-    assert isinstance(proposal, Proposal)
-    assert "the interrupt entry 'stun' must be a plain value" in _last_user(2, llm)
 
 
 def test_the_plan_prompt_leaves_out_track_ranges_when_track_is_off(
@@ -700,42 +641,30 @@ def test_the_plan_prompt_leaves_out_track_ranges_when_track_is_off(
 
 
 def test_a_multiline_prose_line_is_repaired(tmp_path: Path, world_min: WorldDescription) -> None:
-    llm = FakeLlm(
-        {
-            "logic": [_load(CREATE, "brief.json"), _load(CREATE, "plan.json")],
-            "prose": [_load(CREATE, "prose_multiline.json"), _load(CREATE, "prose.json")],
-        }
+    _prose_repair(
+        tmp_path,
+        world_min,
+        _load(CREATE, "prose_multiline.json"),
+        "the unrecognized line 'begin' must be one line",
     )
-    ctx, _ = _ctx(tmp_path, llm, world_min)
-    proposal = create_skill(ctx, "a fire spell")
-    assert isinstance(proposal, Proposal)
-    assert "the unrecognized line 'begin' must be one line" in _last_user(3, llm)
 
 
 def test_an_empty_prose_line_is_repaired(tmp_path: Path, world_min: WorldDescription) -> None:
-    llm = FakeLlm(
-        {
-            "logic": [_load(CREATE, "brief.json"), _load(CREATE, "plan.json")],
-            "prose": [_load(CREATE, "prose_empty.json"), _load(CREATE, "prose.json")],
-        }
+    _prose_repair(
+        tmp_path,
+        world_min,
+        _load(CREATE, "prose_empty.json"),
+        "the unrecognized line 'begin' is empty",
     )
-    ctx, _ = _ctx(tmp_path, llm, world_min)
-    proposal = create_skill(ctx, "a fire spell")
-    assert isinstance(proposal, Proposal)
-    assert "the unrecognized line 'begin' is empty" in _last_user(3, llm)
 
 
 def test_an_unknown_placeholder_is_repaired(tmp_path: Path, world_min: WorldDescription) -> None:
-    llm = FakeLlm(
-        {
-            "logic": [_load(CREATE, "brief.json"), _load(CREATE, "plan.json")],
-            "prose": [_load(CREATE, "prose_unknown_placeholder.json"), _load(CREATE, "prose.json")],
-        }
+    _prose_repair(
+        tmp_path,
+        world_min,
+        _load(CREATE, "prose_unknown_placeholder.json"),
+        "unknown placeholder",
     )
-    ctx, _ = _ctx(tmp_path, llm, world_min)
-    proposal = create_skill(ctx, "a fire spell")
-    assert isinstance(proposal, Proposal)
-    assert "unknown placeholder" in _last_user(3, llm)
 
 
 def test_a_target_placeholder_on_a_self_skill_is_repaired(
