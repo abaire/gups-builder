@@ -60,18 +60,34 @@ def _has_code(decl: DeclView) -> bool:
     return not all(is_editable(value) for value in decl.args.values())
 
 
+def _local_ref(label: Value, path: str) -> str | None:
+    """The id a label names, when it is a local reference like ``:x`` or ``//path:x``."""
+    if not isinstance(label, str):
+        return None
+    if label.startswith(":"):
+        return label[1:]
+    if label.startswith(f"//{path}:"):
+        return label.rsplit(":", 1)[1]
+    return None
+
+
 def _plain_mob(view: PackageView, label: Value) -> bool:
     """True when the spawned mob is a plain mob of this package with no code."""
-    if not isinstance(label, str):
-        return False
-    if label.startswith(":"):
-        mob_id = label[1:]
-    elif label.startswith(f"//{view.path}:"):
-        mob_id = label.rsplit(":", 1)[1]
-    else:
+    mob_id = _local_ref(label, view.path)
+    if mob_id is None:
         return False
     mob = view.get("mob", mob_id)
     return mob is not None and not _has_code(mob)
+
+
+def _spawn_is_plain(spawn: Value, view: PackageView) -> bool:
+    """True when the spawn is a well-formed call whose mob is a plain mob."""
+    if not isinstance(spawn, dict) or spawn.get("$call") != "spawn":
+        return False
+    args = spawn.get("args")
+    if not isinstance(args, list) or not args:
+        return False
+    return _plain_mob(view, args[0])
 
 
 def _without_code(decl: DeclView, view: PackageView) -> bool:
@@ -80,13 +96,7 @@ def _without_code(decl: DeclView, view: PackageView) -> bool:
     spawns = decl.args.get("spawns", [])
     if not isinstance(spawns, list):
         return False
-    for spawn in spawns:
-        if not isinstance(spawn, dict) or spawn.get("$call") != "spawn":
-            return False
-        args = spawn.get("args")
-        if not isinstance(args, list) or not args or not _plain_mob(view, args[0]):
-            return False
-    return True
+    return all(_spawn_is_plain(spawn, view) for spawn in spawns)
 
 
 def _testable_exits(decl: DeclView, package: str) -> list[tuple[str, str]]:
@@ -95,28 +105,47 @@ def _testable_exits(decl: DeclView, package: str) -> list[tuple[str, str]]:
         return []
     out: list[tuple[str, str]] = []
     for item in exits:
-        if not isinstance(item, dict) or item.get("$call") != "exit":
-            continue
-        args = item.get("args")
-        if not isinstance(args, list) or not args:
-            continue
-        direction = _direction(args[0])
-        if direction not in DIRECTION_DELTAS:
-            continue
-        kwargs = item.get("kwargs")
-        if not isinstance(kwargs, dict):
-            continue
-        to = kwargs.get("to")
-        if not isinstance(to, str):
-            continue
-        if not (to.startswith(":") or to.startswith(f"//{package}:")):
-            continue
-        target = to[1:] if to.startswith(":") else to.rsplit(":", 1)[1]
-        state = _door_state(kwargs.get("door"))
-        if state is not None and state != "open":
-            continue
-        out.append((direction, target))
+        pair = _exit_pair(item, package)
+        if pair is not None:
+            out.append(pair)
     return out
+
+
+def _door_blocks(value: Value) -> bool:
+    """True when a door is present and not open."""
+    state = _door_state(value)
+    return state is not None and state != "open"
+
+
+def _exit_direction(item: Value) -> str | None:
+    """The standard direction of an exit call, else None."""
+    if not isinstance(item, dict) or item.get("$call") != "exit":
+        return None
+    args = item.get("args")
+    if not isinstance(args, list) or not args:
+        return None
+    direction = _direction(args[0])
+    if direction not in DIRECTION_DELTAS:
+        return None
+    return direction
+
+
+def _exit_pair(item: Value, package: str) -> tuple[str, str] | None:
+    """The (direction, target) of a testable exit, else None."""
+    if not isinstance(item, dict) or item.get("$call") != "exit":
+        return None
+    direction = _exit_direction(item)
+    if direction is None:
+        return None
+    kwargs = item.get("kwargs")
+    if not isinstance(kwargs, dict):
+        return None
+    target = _local_ref(kwargs.get("to"), package)
+    if target is None:
+        return None
+    if _door_blocks(kwargs.get("door")):
+        return None
+    return (direction, target)
 
 
 def _declared_vitals(decl: DeclView) -> list[tuple[str, int]]:
@@ -130,65 +159,99 @@ def _declared_vitals(decl: DeclView) -> list[tuple[str, int]]:
     return [(name, count) for name, count in kwargs.items() if isinstance(count, int)]
 
 
+def _spawn_names(spawn: Value, view: PackageView, mob_id: str) -> bool:
+    """True when the spawn names the given mob of this package."""
+    if not isinstance(spawn, dict) or spawn.get("$call") != "spawn":
+        return False
+    args = spawn.get("args")
+    if not isinstance(args, list) or not args:
+        return False
+    return _local_ref(args[0], view.path) == mob_id
+
+
+def _room_spawns(room: DeclView, view: PackageView, mob_id: str) -> bool:
+    spawns = room.args.get("spawns")
+    if not isinstance(spawns, list):
+        return False
+    return any(_spawn_names(spawn, view, mob_id) for spawn in spawns)
+
+
 def _spawn_room(view: PackageView, rooms: list[DeclView], mob_id: str) -> str:
     """The first room whose spawns name the mob, else the package's first room."""
     for room in rooms:
-        spawns = room.args.get("spawns")
-        if not isinstance(spawns, list):
-            continue
-        for spawn in spawns:
-            if not isinstance(spawn, dict) or spawn.get("$call") != "spawn":
-                continue
-            args = spawn.get("args")
-            if not isinstance(args, list) or not args or not isinstance(args[0], str):
-                continue
-            if args[0] == f":{mob_id}" or args[0] == f"//{view.path}:{mob_id}":
-                return room.id
+        if _room_spawns(room, view, mob_id):
+            return room.id
     return rooms[0].id
+
+
+def _is_zone(package: str, world: WorldDescription) -> bool:
+    """True when the package is a zone; a package the world knows of another kind is not."""
+    for info in world.packages:
+        if info.path == package:
+            return info.kind is None or info.kind == "zone"
+    return True
+
+
+def _coded_rooms(view: PackageView) -> set[str]:
+    rooms = {d.id for d in view.decls if d.kind == "room" and _has_code(d)}
+    rooms |= {o.id for o in view.opaque if o.kind == "room" and o.id is not None}
+    return rooms
+
+
+def _room_exit_lines(decl: DeclView, view: PackageView, coded_rooms: set[str]) -> list[str]:
+    exits = [
+        (direction, to)
+        for direction, to in _testable_exits(decl, view.path)
+        if to not in coded_rooms
+    ]
+    if not exits:
+        return []
+    lines = [f"def test_builder_{decl.id}_exits(t):", "    w = t.world(seed = 1)"]
+    for i, (direction, to) in enumerate(exits):
+        name = "Walker" if i == 0 else f"Walker{i + 1}"
+        lines.append(f'    p = w.spawn_player("{name}", at = ":{decl.id}")')
+        lines.append(f'    p.do("{direction}")')
+        lines.append(f'    t.eq(p.room, ":{to}")')
+    lines.append("")
+    return lines
+
+
+def _room_tests(view: PackageView, coded_rooms: set[str]) -> list[str]:
+    out: list[str] = []
+    for decl in view.decls:
+        if decl.kind == "room" and _without_code(decl, view):
+            out.extend(_room_exit_lines(decl, view, coded_rooms))
+    return out
+
+
+def _mob_vital_lines(decl: DeclView, view: PackageView, rooms: list[DeclView]) -> list[str]:
+    vitals = _declared_vitals(decl)
+    if not vitals:
+        return []
+    lines = [f"def test_builder_{decl.id}_vitals(t):", "    w = t.world(seed = 1)"]
+    lines.append(f'    m = w.spawn(":{decl.id}", at = ":{_spawn_room(view, rooms, decl.id)}")')
+    for vital, count in vitals:
+        lines.append(f"    t.eq(m.max_{vital}, {count})")
+    lines.append("")
+    return lines
+
+
+def _mob_vital_tests(view: PackageView, rooms: list[DeclView]) -> list[str]:
+    out: list[str] = []
+    for decl in view.decls:
+        if decl.kind == "mob" and not _has_code(decl):
+            out.extend(_mob_vital_lines(decl, view, rooms))
+    return out
 
 
 def builder_test(package: str, world: WorldDescription, view: PackageView) -> str:
     """The test file for a zone package; empty when the package is not a zone."""
-    for info in world.packages:
-        if info.path == package and info.kind is not None and info.kind != "zone":
-            return ""
-    coded_rooms = {d.id for d in view.decls if d.kind == "room" and _has_code(d)}
-    coded_rooms |= {o.id for o in view.opaque if o.kind == "room" and o.id is not None}
+    if not _is_zone(package, world):
+        return ""
+    coded_rooms = _coded_rooms(view)
     lines = [_HEADER, "def test_builder_package_loads(t):", "    t.world(seed = 1)", ""]
-    for decl in view.decls:
-        if decl.kind != "room":
-            continue
-        if not _without_code(decl, view):
-            continue
-        exits = [
-            (direction, to)
-            for direction, to in _testable_exits(decl, view.path)
-            if to not in coded_rooms
-        ]
-        if not exits:
-            continue
-        lines.append(f"def test_builder_{decl.id}_exits(t):")
-        lines.append("    w = t.world(seed = 1)")
-        for i, (direction, to) in enumerate(exits):
-            name = "Walker" if i == 0 else f"Walker{i + 1}"
-            lines.append(f'    p = w.spawn_player("{name}", at = ":{decl.id}")')
-            lines.append(f'    p.do("{direction}")')
-            lines.append(f'    t.eq(p.room, ":{to}")')
-        lines.append("")
+    lines.extend(_room_tests(view, coded_rooms))
     rooms = [d for d in view.decls if d.kind == "room"]
     if rooms:
-        for decl in view.decls:
-            if decl.kind != "mob" or _has_code(decl):
-                continue
-            vitals = _declared_vitals(decl)
-            if not vitals:
-                continue
-            lines.append(f"def test_builder_{decl.id}_vitals(t):")
-            lines.append("    w = t.world(seed = 1)")
-            lines.append(
-                f'    m = w.spawn(":{decl.id}", at = ":{_spawn_room(view, rooms, decl.id)}")'
-            )
-            for vital, count in vitals:
-                lines.append(f"    t.eq(m.max_{vital}, {count})")
-            lines.append("")
+        lines.extend(_mob_vital_tests(view, rooms))
     return "\n".join(lines).rstrip("\n") + "\n"
