@@ -11,10 +11,10 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from conftest import FakeEngine, PackageState, build_context, load_api, read_fixture
 
 from gups_builder.config import Config
-from gups_builder.engine.api import ApiModel
-from gups_builder.engine.gups import Gups, TestRun
+from gups_builder.engine.gups import Gups
 from gups_builder.engine.lint import LintFinding
 from gups_builder.engine.world import WorldDescription
 from gups_builder.llm.fake import FakeLlm
@@ -32,7 +32,6 @@ from gups_builder.star.reader import read_package
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "llm" / "area_refine"
 MANSION = Path(__file__).resolve().parent / "fixtures" / "mansion"
-REPO = Path(__file__).resolve().parent.parent
 
 # The Phase 8 mansion's coordinates; the cellar sits under the parlour so the
 # kitchen's z-1 is free for the wine cellar.
@@ -50,29 +49,8 @@ GRID = {
 }
 
 
-class FakeEngine:
-    def __init__(
-        self, world: WorldDescription, api: ApiModel, lint: list[list[LintFinding]] | None = None
-    ) -> None:
-        self._world = world
-        self._api = api
-        self._lint = list(lint or [])
-
-    def describe_world(self, world: Path | None = None) -> WorldDescription:
-        return self._world
-
-    def api(self) -> ApiModel:
-        return self._api
-
-    def lint(self, package: str, world: Path | None = None) -> list[LintFinding]:
-        return self._lint.pop(0) if self._lint else []
-
-    def test(self, package: str, world: Path | None = None) -> TestRun:
-        return TestRun(ok=True, output="")
-
-
 def _load(name: str) -> str:
-    return (FIXTURES / name).read_text()
+    return read_fixture(FIXTURES, name)
 
 
 def _ctx(
@@ -81,21 +59,10 @@ def _ctx(
     world: WorldDescription,
     lint: list[list[LintFinding]] | None = None,
 ) -> tuple[Context, FakeEngine]:
-    api = ApiModel.model_validate_json((REPO / "tests" / "fixtures" / "api_min.json").read_text())
-    engine = FakeEngine(world, api, lint)
     files = {name: (MANSION / name).read_text() for name in ("rooms.star", "items.star")}
-    ctx = Context(
-        world_dir=tmp_path,
-        world=world,
-        api=api,
-        package="zones/mansion",
-        view=read_package(MANSION, "zones/mansion"),
-        files=files,
-        llm=llm,
-        config=Config(max_repairs=1),
-        engine=engine,
-    )
-    return ctx, engine
+    state = PackageState("zones/mansion", files, read_package(MANSION, "zones/mansion"))
+    engine = FakeEngine(world, load_api(), lint)
+    return build_context(tmp_path, llm, engine, state), engine
 
 
 DOOR_LOCKED: dict[str, object] = {

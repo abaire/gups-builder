@@ -4,16 +4,83 @@ from __future__ import annotations
 
 import os
 import shutil
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
 
-from gups_builder.engine.gups import EngineError, Gups
+from gups_builder.config import Config
+from gups_builder.engine.api import ApiModel
+from gups_builder.engine.gups import EngineError, Gups, TestRun
+from gups_builder.engine.lint import LintFinding
 from gups_builder.engine.world import WorldDescription
+from gups_builder.llm.fake import FakeLlm
+from gups_builder.modes.common import Context
+from gups_builder.star.reader import PackageView
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 _SKIP_DIRS = (".git", ".gups", ".builder", "local-world-test")
+
+
+def read_fixture(base: Path, name: str) -> str:
+    return (base / name).read_text()
+
+
+def load_api() -> ApiModel:
+    return ApiModel.model_validate_json(
+        read_fixture(REPO_ROOT / "tests" / "fixtures", "api_min.json")
+    )
+
+
+class FakeEngine:
+    """An engine double: fixed world and API, scripted lint runs, counted test runs."""
+
+    def __init__(
+        self, world: WorldDescription, api: ApiModel, lint: list[list[LintFinding]] | None = None
+    ) -> None:
+        self._world = world
+        self._api = api
+        self._lint = list(lint or [])
+        self.test_calls = 0
+
+    def describe_world(self, world: Path | None = None) -> WorldDescription:
+        return self._world
+
+    def api(self) -> ApiModel:
+        return self._api
+
+    def lint(self, package: str, world: Path | None = None) -> list[LintFinding]:
+        return self._lint.pop(0) if self._lint else []
+
+    def test(self, package: str, world: Path | None = None) -> TestRun:
+        self.test_calls += 1
+        return TestRun(ok=True, output="")
+
+
+@dataclass
+class PackageState:
+    """The package under edit: its name, the files read so far, and the parsed view."""
+
+    package: str
+    files: dict[str, str] = field(default_factory=dict)
+    view: PackageView | None = None
+
+
+def build_context(tmp_path: Path, llm: FakeLlm, engine: FakeEngine, state: PackageState) -> Context:
+    """A creation context over ``engine``; the view defaults to an empty package."""
+    empty = PackageView(path=state.package, files={}, decls=[], opaque=[])
+    return Context(
+        world_dir=tmp_path,
+        world=engine.describe_world(),
+        api=engine.api(),
+        package=state.package,
+        view=state.view or empty,
+        files=dict(state.files),
+        llm=llm,
+        config=Config(max_repairs=1),
+        engine=engine,
+    )
 
 
 @pytest.fixture(scope="session")

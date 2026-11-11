@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import pytest
+from conftest import load_api, read_fixture
 from rich.console import Console
 
 from gups_builder.config import Config
@@ -47,11 +48,11 @@ _GATE = (
 
 
 def _load(base: Path, name: str) -> str:
-    return (base / name).read_text()
+    return read_fixture(base, name)
 
 
 def _api() -> ApiModel:
-    return ApiModel.model_validate_json((REPO / "tests" / "fixtures" / "api_min.json").read_text())
+    return load_api()
 
 
 class FakeEngine:

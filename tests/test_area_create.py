@@ -6,10 +6,10 @@ import json
 from pathlib import Path
 
 import pytest
+from conftest import FakeEngine, PackageState, build_context, load_api, read_fixture
 
 from gups_builder.config import Config
-from gups_builder.engine.api import ApiModel
-from gups_builder.engine.gups import Gups, TestRun
+from gups_builder.engine.gups import Gups
 from gups_builder.engine.lint import LintFinding
 from gups_builder.engine.world import WorldDescription
 from gups_builder.llm.fake import FakeLlm
@@ -20,34 +20,6 @@ from gups_builder.star.reader import PackageView
 from gups_builder.star.values import Value
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "llm" / "area_mansion"
-REPO = Path(__file__).resolve().parent.parent
-
-
-class FakeEngine:
-    def __init__(
-        self, world: WorldDescription, api: ApiModel, lint: list[list[LintFinding]] | None = None
-    ) -> None:
-        self._world = world
-        self._api = api
-        self._lint = list(lint or [])
-        self.test_calls = 0
-
-    def describe_world(self, world: Path | None = None) -> WorldDescription:
-        return self._world
-
-    def api(self) -> ApiModel:
-        return self._api
-
-    def lint(self, package: str, world: Path | None = None) -> list[LintFinding]:
-        return self._lint.pop(0) if self._lint else []
-
-    def test(self, package: str, world: Path | None = None) -> TestRun:
-        self.test_calls += 1
-        return TestRun(ok=True, output="")
-
-
-def _load(name: str) -> str:
-    return (FIXTURES / name).read_text()
 
 
 def _ctx(
@@ -56,20 +28,12 @@ def _ctx(
     world: WorldDescription,
     lint: list[list[LintFinding]] | None = None,
 ) -> tuple[Context, FakeEngine]:
-    api = ApiModel.model_validate_json((REPO / "tests" / "fixtures" / "api_min.json").read_text())
-    engine = FakeEngine(world, api, lint)
-    ctx = Context(
-        world_dir=tmp_path,
-        world=world,
-        api=api,
-        package="zones/mansion",
-        view=PackageView(path="zones/mansion", files={}, decls=[], opaque=[]),
-        files={},
-        llm=llm,
-        config=Config(max_repairs=1),
-        engine=engine,
-    )
-    return ctx, engine
+    engine = FakeEngine(world, load_api(), lint)
+    return build_context(tmp_path, llm, engine, PackageState("zones/mansion")), engine
+
+
+def _load(name: str) -> str:
+    return read_fixture(FIXTURES, name)
 
 
 NoneS = [

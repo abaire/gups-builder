@@ -16,10 +16,10 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from conftest import FakeEngine, PackageState, build_context, load_api, read_fixture
 
 from gups_builder.config import Config
-from gups_builder.engine.api import ApiModel
-from gups_builder.engine.gups import Gups, TestRun
+from gups_builder.engine.gups import Gups
 from gups_builder.engine.lint import LintFinding
 from gups_builder.engine.world import (
     MobInfo,
@@ -52,35 +52,8 @@ REPO = Path(__file__).resolve().parent.parent
 PACKAGE = "zones/tutorial"
 
 
-class FakeEngine:
-    def __init__(
-        self, world: WorldDescription, api: ApiModel, lint: list[list[LintFinding]] | None = None
-    ) -> None:
-        self._world = world
-        self._api = api
-        self._lint = list(lint or [])
-        self.test_calls = 0
-
-    def describe_world(self, world: Path | None = None) -> WorldDescription:
-        return self._world
-
-    def api(self) -> ApiModel:
-        return self._api
-
-    def lint(self, package: str, world: Path | None = None) -> list[LintFinding]:
-        return self._lint.pop(0) if self._lint else []
-
-    def test(self, package: str, world: Path | None = None) -> TestRun:
-        self.test_calls += 1
-        return TestRun(ok=True, output="")
-
-
 def _load(base: Path, name: str) -> str:
-    return (base / name).read_text()
-
-
-def _api() -> ApiModel:
-    return ApiModel.model_validate_json((REPO / "tests" / "fixtures" / "api_min.json").read_text())
+    return read_fixture(base, name)
 
 
 def _ctx(
@@ -89,22 +62,11 @@ def _ctx(
     world: WorldDescription,
     files: dict[str, str] | None = None,
     view: PackageView | None = None,
+    package: str = PACKAGE,
     lint: list[list[LintFinding]] | None = None,
 ) -> tuple[Context, FakeEngine]:
-    api = _api()
-    engine = FakeEngine(world, api, lint)
-    ctx = Context(
-        world_dir=tmp_path,
-        world=world,
-        api=api,
-        package=PACKAGE,
-        view=view or PackageView(path=PACKAGE, files={}, decls=[], opaque=[]),
-        files=dict(files or {}),
-        llm=llm,
-        config=Config(max_repairs=1),
-        engine=engine,
-    )
-    return ctx, engine
+    engine = FakeEngine(world, load_api(), lint)
+    return build_context(tmp_path, llm, engine, PackageState(package, files or {}, view)), engine
 
 
 def _goblins_ctx(
