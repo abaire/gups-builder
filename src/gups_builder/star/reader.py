@@ -116,64 +116,96 @@ def _declarations(
             continue
         line = positions[call].start.line
         if call in top_level:
-            decl_id = _first_literal_id(call)
-            if decl_id is None:
-                opaque.append(
-                    OpaqueDecl(
-                        kind=func.value,
-                        id=None,
-                        file=name,
-                        line=line,
-                        reason="id is not a string literal",
-                    )
-                )
-                continue
-            args: dict[str, Value] = {}
-            extra_positional: list[Value] = []
-            for index, arg in enumerate(call.args):
-                value = to_value(arg.value, module)
-                if arg.keyword is not None:
-                    args[arg.keyword.value] = value
-                elif index > 0:
-                    extra_positional.append(value)
-            decls.append(
-                DeclView(
-                    kind=func.value,
-                    id=decl_id,
-                    file=name,
-                    line=line,
-                    args=args,
-                    extra_positional=extra_positional,
-                )
-            )
+            outcome = _top_level_decl(module, call, name, line)
         else:
-            opaque.append(
-                OpaqueDecl(
-                    kind=func.value,
-                    id=_first_literal_id(call),
-                    file=name,
-                    line=line,
-                    reason="not at top level",
-                )
-            )
+            outcome = _nested_decl(func.value, call, name, line)
+        if isinstance(outcome, DeclView):
+            decls.append(outcome)
+        else:
+            opaque.append(outcome)
     return decls, opaque
+
+
+def _top_level_decl(
+    module: cst.Module,
+    call: cst.Call,
+    file: str,
+    line: int,
+) -> DeclView | OpaqueDecl:
+    """A top-level declaration call, or an opaque decl when its id is not a string literal."""
+    func = call.func
+    assert isinstance(func, cst.Name), "the collector only gathers declaration-kind name calls"
+    decl_id = _first_literal_id(call)
+    if decl_id is None:
+        return OpaqueDecl(
+            kind=func.value,
+            id=None,
+            file=file,
+            line=line,
+            reason="id is not a string literal",
+        )
+    args, extra_positional = _split_args(module, call)
+    return DeclView(
+        kind=func.value,
+        id=decl_id,
+        file=file,
+        line=line,
+        args=args,
+        extra_positional=extra_positional,
+    )
+
+
+def _nested_decl(kind: str, call: cst.Call, file: str, line: int) -> OpaqueDecl:
+    """A declaration-kind call that is not at top level stays opaque."""
+    return OpaqueDecl(
+        kind=kind, id=_first_literal_id(call), file=file, line=line, reason="not at top level"
+    )
+
+
+def _split_args(module: cst.Module, call: cst.Call) -> tuple[dict[str, Value], list[Value]]:
+    """Keyword arguments as a dict; positional arguments after the id as a list."""
+    args: dict[str, Value] = {}
+    extra_positional: list[Value] = []
+    for index, arg in enumerate(call.args):
+        value = to_value(arg.value, module)
+        if arg.keyword is not None:
+            args[arg.keyword.value] = value
+        elif index > 0:
+            extra_positional.append(value)
+    return args, extra_positional
 
 
 def _top_level_calls(module: cst.Module) -> set[cst.Call]:
     """Every declaration-kind call that stands as an expression statement."""
     calls = set()
     for statement in module.body:
-        if not isinstance(statement, cst.SimpleStatementLine):
-            continue
-        for item in statement.body:
-            if (
-                isinstance(item, cst.Expr)
-                and isinstance(item.value, cst.Call)
-                and isinstance(item.value.func, cst.Name)
-                and item.value.func.value in DECLARATION_KINDS
-            ):
-                calls.add(item.value)
+        if isinstance(statement, cst.SimpleStatementLine):
+            calls |= _statement_calls(statement)
     return calls
+
+
+def _statement_calls(statement: cst.SimpleStatementLine) -> set[cst.Call]:
+    calls = set()
+    for item in statement.body:
+        call = _declaration_call(item)
+        if call is not None:
+            calls.add(call)
+    return calls
+
+
+def _declaration_call(item: cst.BaseSmallStatement) -> cst.Call | None:
+    """The declaration-kind call behind an expression statement, if any."""
+    if not isinstance(item, cst.Expr):
+        return None
+    call = item.value
+    if not isinstance(call, cst.Call):
+        return None
+    func = call.func
+    if not isinstance(func, cst.Name):
+        return None
+    if func.value not in DECLARATION_KINDS:
+        return None
+    return call
 
 
 class _CallCollector(cst.CSTVisitor):
