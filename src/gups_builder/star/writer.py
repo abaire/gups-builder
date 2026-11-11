@@ -10,7 +10,7 @@ and parsed back, so a written list keeps its one-item-per-line shape.
 from __future__ import annotations
 
 import ast
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import overload
 
@@ -121,11 +121,14 @@ def _plain_only(op: SetArg | AppendItem) -> OpRefused:
 
 
 def _refuse_if_computed(op: StarOp, found: _Found, name: str, node: cst.BaseExpression) -> None:
-    if not is_editable(to_value(node, found.module)):
-        line = found.positions[node].start.line
-        raise OpRefused(
-            op, _computed_by_code(op.kind, op.id, name, found.file, line), found.file, line
-        )
+    """Refuse an op on an argument whose value the file computes by code."""
+    if is_editable(to_value(node, found.module)):
+        return
+    line = found.positions[node].start.line
+    text = (
+        f"{op.kind} '{op.id}': {name} is computed by code ({found.file}:{line}); change it by hand"
+    )
+    raise OpRefused(op, text, found.file, line)
 
 
 def _arg_indent(call: cst.Call) -> int:
@@ -166,24 +169,69 @@ def _apply_one(contents: dict[str, str], view: PackageView, op: StarOp) -> dict[
 def _find_decl(contents: dict[str, str], kind: str, id: str) -> _Found | None:
     """The plain declaration of (kind, id), re-parsed from the current contents."""
     for name in sorted(contents):
-        try:
-            wrapper = MetadataWrapper(cst.parse_module(contents[name]))
-        except cst.ParserSyntaxError as error:
-            raise StarParseError(name, error.editor_line, error.message) from error
-        module = wrapper.module
-        positions = wrapper.resolve(PositionProvider)
-        for statement in module.body:
-            if not isinstance(statement, cst.SimpleStatementLine):
-                continue
-            for item in statement.body:
-                if not isinstance(item, cst.Expr) or not isinstance(item.value, cst.Call):
-                    continue
-                call = item.value
-                if not isinstance(call.func, cst.Name) or call.func.value != kind:
-                    continue
-                if _decl_id(call) == id:
-                    return _Found(name, module, statement, call, positions)
+        module, positions = _parse_contents(contents, name)
+        hit = _declaration_in(module, positions, kind, id)
+        if hit is not None:
+            statement, call = hit
+            return _Found(name, module, statement, call, positions)
     return None
+
+
+def _parse_contents(
+    contents: dict[str, str], name: str
+) -> tuple[cst.Module, Mapping[cst.CSTNode, CodeRange]]:
+    """The parsed module and position table for ``name`` in ``contents``."""
+    try:
+        wrapper = MetadataWrapper(cst.parse_module(contents[name]))
+    except cst.ParserSyntaxError as error:
+        raise StarParseError(name, error.editor_line, error.message) from error
+    return wrapper.module, wrapper.resolve(PositionProvider)
+
+
+def _declaration_in(
+    module: cst.Module,
+    positions: Mapping[cst.CSTNode, CodeRange],
+    kind: str,
+    id: str,
+) -> tuple[cst.SimpleStatementLine, cst.Call] | None:
+    """The (statement, call) that plainly declares (kind, id) in ``module``, if any."""
+    for statement in _simple_statements(module.body):
+        call = _first_decl_call(statement, kind, id)
+        if call is not None:
+            return statement, call
+    return None
+
+
+def _simple_statements(body: Sequence[cst.BaseStatement]) -> Iterator[cst.SimpleStatementLine]:
+    """The simple statements in a module body, in order."""
+    for statement in body:
+        if isinstance(statement, cst.SimpleStatementLine):
+            yield statement
+
+
+def _first_decl_call(statement: cst.SimpleStatementLine, kind: str, id: str) -> cst.Call | None:
+    """The first item of a statement that declares (kind, id) plainly, if any."""
+    for item in statement.body:
+        call = _decl_item(item, kind, id)
+        if call is not None:
+            return call
+    return None
+
+
+def _decl_item(item: cst.BaseSmallStatement, kind: str, id: str) -> cst.Call | None:
+    """The call a statement item declares, when it names (kind, id) plainly."""
+    if not isinstance(item, cst.Expr):
+        return None
+    if not isinstance(item.value, cst.Call):
+        return None
+    call = item.value
+    if not isinstance(call.func, cst.Name):
+        return None
+    if call.func.value != kind:
+        return None
+    if _decl_id(call) != id:
+        return None
+    return call
 
 
 def _decl_of(contents: dict[str, str], op: StarOp) -> _Found:
@@ -193,10 +241,6 @@ def _decl_of(contents: dict[str, str], op: StarOp) -> _Found:
             op, f"{op.kind} '{op.id}' is not a plain declaration in this package", None, None
         )
     return found
-
-
-def _computed_by_code(kind: str, id: str, name: str, file: str, line: int) -> str:
-    return f"{kind} '{id}': {name} is computed by code ({file}:{line}); change it by hand"
 
 
 def _decl_id(call: cst.Call) -> str | None:
@@ -224,41 +268,52 @@ def _rewrite_call(contents: dict[str, str], found: _Found, call: cst.Call) -> di
     return {**contents, found.file: found.module.with_changes(body=tuple(body)).code}
 
 
+def _arg_index(args: Sequence[cst.Arg], name: str) -> int | None:
+    """The index of the keyword argument named ``name``, or None if there is none."""
+    for i, arg in enumerate(args):
+        if arg.keyword is None:
+            continue
+        if arg.keyword.value != name:
+            continue
+        return i
+    return None
+
+
 def _op_set_arg(contents: dict[str, str], op: SetArg) -> dict[str, str]:
     if not _writable(op.value):
         raise _plain_only(op)
     found = _decl_of(contents, op)
     indent = _arg_indent(found.call)
     args = list(found.call.args)
-    for i, arg in enumerate(args):
-        if arg.keyword is None or arg.keyword.value != op.name:
-            continue
-        _refuse_if_computed(op, found, op.name, arg.value)
-        args[i] = arg.with_changes(value=_from_value(op.value, indent))
-        return _rewrite_call(contents, found, found.call.with_changes(args=tuple(args)))
-    expr = _from_value(op.value, indent)
-    return _rewrite_call(
-        contents, found, found.call.with_changes(args=_append_arg(found.call, op.name, expr))
-    )
+    index = _arg_index(args, op.name)
+    if index is None:
+        expr = _from_value(op.value, indent)
+        return _rewrite_call(
+            contents, found, found.call.with_changes(args=_append_arg(found.call, op.name, expr))
+        )
+    arg = args[index]
+    _refuse_if_computed(op, found, op.name, arg.value)
+    args[index] = arg.with_changes(value=_from_value(op.value, indent))
+    return _rewrite_call(contents, found, found.call.with_changes(args=tuple(args)))
 
 
 def _op_remove_arg(contents: dict[str, str], op: RemoveArg) -> dict[str, str]:
     found = _decl_of(contents, op)
     args = list(found.call.args)
-    for i, arg in enumerate(args):
-        if arg.keyword is None or arg.keyword.value != op.name:
-            continue
-        _refuse_if_computed(op, found, op.name, arg.value)
-        if i == len(args) - 1:
-            # The new last argument takes over where the closing paren sits.
-            args[i - 1] = args[i - 1].with_changes(
-                comma=arg.comma, whitespace_after_arg=arg.whitespace_after_arg
-            )
-        else:
-            args[i - 1] = _carry_comments(args[i - 1], arg)
-        args.pop(i)
-        return _rewrite_call(contents, found, found.call.with_changes(args=tuple(args)))
-    raise OpRefused(op, f"{op.kind} '{op.id}': {op.name} has no such argument", None, None)
+    index = _arg_index(args, op.name)
+    if index is None:
+        raise OpRefused(op, f"{op.kind} '{op.id}': {op.name} has no such argument", None, None)
+    arg = args[index]
+    _refuse_if_computed(op, found, op.name, arg.value)
+    if index == len(args) - 1:
+        # The new last argument takes over where the closing paren sits.
+        args[index - 1] = args[index - 1].with_changes(
+            comma=arg.comma, whitespace_after_arg=arg.whitespace_after_arg
+        )
+    else:
+        args[index - 1] = _carry_comments(args[index - 1], arg)
+    args.pop(index)
+    return _rewrite_call(contents, found, found.call.with_changes(args=tuple(args)))
 
 
 def _op_append_item(contents: dict[str, str], op: AppendItem) -> dict[str, str]:
@@ -267,68 +322,72 @@ def _op_append_item(contents: dict[str, str], op: AppendItem) -> dict[str, str]:
     found = _decl_of(contents, op)
     indent = _arg_indent(found.call)
     args = list(found.call.args)
-    for i, arg in enumerate(args):
-        if arg.keyword is None or arg.keyword.value != op.name:
-            continue
-        node = arg.value
-        _refuse_if_computed(op, found, op.name, node)
-        if not isinstance(node, cst.List):
-            raise OpRefused(op, f"{op.kind} '{op.id}': {op.name} is not a list", None, None)
-        item = _from_value(op.value, _item_indent(node, indent))
-        args[i] = arg.with_changes(value=_append_element(node, item))
-        return _rewrite_call(contents, found, found.call.with_changes(args=tuple(args)))
-    expr = _from_value([op.value], indent)
-    return _rewrite_call(
-        contents, found, found.call.with_changes(args=_append_arg(found.call, op.name, expr))
-    )
+    index = _arg_index(args, op.name)
+    if index is None:
+        expr = _from_value([op.value], indent)
+        return _rewrite_call(
+            contents, found, found.call.with_changes(args=_append_arg(found.call, op.name, expr))
+        )
+    arg = args[index]
+    node = arg.value
+    _refuse_if_computed(op, found, op.name, node)
+    if not isinstance(node, cst.List):
+        raise OpRefused(op, f"{op.kind} '{op.id}': {op.name} is not a list", None, None)
+    item = _from_value(op.value, _item_indent(node, indent))
+    args[index] = arg.with_changes(value=_append_element(node, item))
+    return _rewrite_call(contents, found, found.call.with_changes(args=tuple(args)))
 
 
 def _op_remove_item(contents: dict[str, str], op: RemoveItem) -> dict[str, str]:
     found = _decl_of(contents, op)
     args = list(found.call.args)
-    for i, arg in enumerate(args):
-        if arg.keyword is None or arg.keyword.value != op.name:
-            continue
-        node = arg.value
-        _refuse_if_computed(op, found, op.name, node)
-        if not isinstance(node, cst.List):
-            raise OpRefused(op, f"{op.kind} '{op.id}': {op.name} is not a list", None, None)
-        elements = list(node.elements)
-        items = [to_value(element.value, found.module) for element in elements]
-        matching = [j for j, item in enumerate(items) if _matches(item, op.match)]
-        if len(matching) == 0:
-            raise OpRefused(op, f"{op.kind} '{op.id}': {op.name} has no matching item", None, None)
-        if len(matching) > 1:
-            raise OpRefused(
-                op, f"{op.kind} '{op.id}': {op.name} has more than one matching item", None, None
+    index = _arg_index(args, op.name)
+    if index is None:
+        raise OpRefused(op, f"{op.kind} '{op.id}': {op.name} has no such argument", None, None)
+    node = args[index].value
+    _refuse_if_computed(op, found, op.name, node)
+    if not isinstance(node, cst.List):
+        raise OpRefused(op, f"{op.kind} '{op.id}': {op.name} is not a list", None, None)
+    element_index = _matched_index(node, op, found.module)
+    args[index] = args[index].with_changes(value=_remove_element(node, element_index))
+    return _rewrite_call(contents, found, found.call.with_changes(args=tuple(args)))
+
+
+def _matched_index(node: cst.List, op: RemoveItem, module: cst.Module) -> int:
+    """The one list element matching ``op.match``, or a refusal."""
+    items = [to_value(element.value, module) for element in node.elements]
+    matching = [j for j, item in enumerate(items) if _matches(item, op.match)]
+    if len(matching) == 0:
+        raise OpRefused(op, f"{op.kind} '{op.id}': {op.name} has no matching item", None, None)
+    if len(matching) > 1:
+        raise OpRefused(
+            op, f"{op.kind} '{op.id}': {op.name} has more than one matching item", None, None
+        )
+    return matching[0]
+
+
+def _remove_element(node: cst.List, index: int) -> cst.List:
+    """The list with the item at ``index`` gone, its comments and whitespace moved."""
+    elements = list(node.elements)
+    removed = elements.pop(index)
+    if not elements:
+        return node.with_changes(
+            elements=(),
+            lbracket=node.lbracket.with_changes(whitespace_after=_WS("")),
+            rbracket=node.rbracket.with_changes(whitespace_before=_WS("")),
+        )
+    if index == len(elements):
+        elements[-1] = elements[-1].with_changes(comma=removed.comma)
+    elif index == 0:
+        # The first item's leading whitespace lives in the bracket.
+        node = node.with_changes(
+            lbracket=node.lbracket.with_changes(
+                whitespace_after=_merge_comments(node.lbracket.whitespace_after, removed.comma)
             )
-        index = matching[0]
-        removed = elements.pop(index)
-        if elements:
-            new_list = node
-            if index == len(elements):
-                elements[-1] = elements[-1].with_changes(comma=removed.comma)
-            elif index == 0:
-                # The first item's leading whitespace lives in the bracket.
-                new_list = node.with_changes(
-                    lbracket=node.lbracket.with_changes(
-                        whitespace_after=_merge_comments(
-                            node.lbracket.whitespace_after, removed.comma
-                        )
-                    )
-                )
-            else:
-                elements[index - 1] = _carry_comments(elements[index - 1], removed)
-            new_list = new_list.with_changes(elements=tuple(elements))
-        else:
-            new_list = node.with_changes(
-                elements=(),
-                lbracket=node.lbracket.with_changes(whitespace_after=_WS("")),
-                rbracket=node.rbracket.with_changes(whitespace_before=_WS("")),
-            )
-        args[i] = arg.with_changes(value=new_list)
-        return _rewrite_call(contents, found, found.call.with_changes(args=tuple(args)))
-    raise OpRefused(op, f"{op.kind} '{op.id}': {op.name} has no such argument", None, None)
+        )
+    else:
+        elements[index - 1] = _carry_comments(elements[index - 1], removed)
+    return node.with_changes(elements=tuple(elements))
 
 
 def _op_remove_decl(contents: dict[str, str], op: RemoveDecl) -> dict[str, str]:
@@ -386,36 +445,65 @@ def _op_add_todo(contents: dict[str, str], op: AddTodo) -> dict[str, str]:
 def _op_add_decl(contents: dict[str, str], view: PackageView, op: AddDecl) -> dict[str, str]:
     if _find_decl(contents, op.kind, op.id) is not None:
         raise OpRefused(op, f"{op.kind} '{op.id}' already exists", None, None)
-    for value in op.args.values():
-        if not _writable(value):
-            raise OpRefused(
-                op, f"new arguments of {op.kind} '{op.id}' must be plain values", None, None
-            )
+    if not _all_writable(op.args.values()):
+        raise OpRefused(
+            op, f"new arguments of {op.kind} '{op.id}' must be plain values", None, None
+        )
     rendered = render_decl(op.kind, op.id, op.args, op.comment)
     if op.file in contents:
-        base = contents[op.file]
-        if base and not base.endswith("\n"):
-            base += "\n"
-        return {**contents, op.file: base + "\n" + rendered}
+        return {**contents, op.file: _with_rendered(contents[op.file], rendered)}
     header = f"# {op.kind.capitalize()}s of {view.path}, started by gups-builder.\n"
     return {**contents, op.file: header + rendered}
 
 
+def _all_writable(values: Iterable[Value]) -> bool:
+    """Whether every value renders to an expression that parses back."""
+    return all(_writable(value) for value in values)
+
+
+def _with_rendered(base: str, rendered: str) -> str:
+    """A file's text with a new declaration appended, keeping a trailing newline."""
+    if base and not base.endswith("\n"):
+        base += "\n"
+    return base + "\n" + rendered
+
+
 def _matches(item: Value, match: ItemMatch) -> bool:
+    """Whether a value an item holds satisfies the item filter."""
     if not isinstance(item, dict) or "$call" not in item:
-        return match.call is None and match.first_arg is None and match.kwarg is None
-    if match.call is not None and item["$call"] != match.call:
+        return _empty_match(match)
+    if _call_mismatches(item, match.call):
         return False
-    if match.first_arg is not None:
-        args = item["args"]
-        if not isinstance(args, list) or not args or args[0] != match.first_arg:
-            return False
-    if match.kwarg is not None:
-        name, wanted = match.kwarg
-        kwargs = item["kwargs"]
-        if not isinstance(kwargs, dict) or kwargs.get(name) != wanted:
-            return False
-    return True
+    if _first_arg_mismatches(item, match.first_arg):
+        return False
+    return not _kwarg_mismatches(item, match.kwarg)
+
+
+def _empty_match(match: ItemMatch) -> bool:
+    """Whether a filter that names nothing matches a non-call item."""
+    return match.call is None and match.first_arg is None and match.kwarg is None
+
+
+def _call_mismatches(item: dict[str, Value], call: str | None) -> bool:
+    """Whether a named-call filter rejects the call an item makes."""
+    return call is not None and item["$call"] != call
+
+
+def _first_arg_mismatches(item: dict[str, Value], first_arg: Value | None) -> bool:
+    """Whether a first-argument filter rejects the arguments a call passes."""
+    if first_arg is None:
+        return False
+    args = item["args"]
+    return not isinstance(args, list) or not args or args[0] != first_arg
+
+
+def _kwarg_mismatches(item: dict[str, Value], kwarg: tuple[str, Value] | None) -> bool:
+    """Whether a keyword-argument filter rejects the keyword arguments a call passes."""
+    if kwarg is None:
+        return False
+    name, wanted = kwarg
+    kwargs = item["kwargs"]
+    return not isinstance(kwargs, dict) or kwargs.get(name) != wanted
 
 
 def _from_value(value: Value, indent: int) -> cst.BaseExpression:
@@ -429,89 +517,98 @@ def _append_arg(call: cst.Call, name: str, expr: cst.BaseExpression) -> tuple[cs
     keyword = cst.Name(name)
     equal = cst.AssignEqual(whitespace_before=_WS(" "), whitespace_after=_WS(" "))
     if not args:
-        arg = cst.Arg(
-            value=expr,
-            keyword=keyword,
-            equal=equal,
-            whitespace_after_arg=_WS(""),
-            comma=cst.MaybeSentinel.DEFAULT,
-        )
-        return (arg,)
+        return (_arg(expr, keyword, equal),)
     last = args[-1]
     if isinstance(last.comma, cst.Comma):
-        old_comma = last.comma
-        between: cst.Comma
-        if len(args) >= 2 and isinstance(args[-2].comma, cst.Comma):
-            between = args[-2].comma
-        elif isinstance(old_comma.whitespace_after, cst.ParenthesizedWhitespace):
-            between = old_comma.with_changes(
-                whitespace_after=old_comma.whitespace_after.with_changes(last_line=_INDENT)
-            )
-        else:
-            between = old_comma
-        new_arg = cst.Arg(
-            value=expr, keyword=keyword, equal=equal, whitespace_after_arg=_WS(""), comma=old_comma
-        )
-        last = last.with_changes(comma=between)
+        new_arg = _arg(expr, keyword, equal, last.comma)
+        last = last.with_changes(comma=_between_comma(args, last.comma, _INDENT))
         return (*args[:-1], last, new_arg)
-    separator: cst.BaseParenthesizableWhitespace
-    if (
-        len(args) >= 2
-        and isinstance(args[-2].comma, cst.Comma)
-        and isinstance(args[-2].comma.whitespace_after, cst.ParenthesizedWhitespace)
-    ):
-        separator = args[-2].comma.whitespace_after
-    else:
-        separator = _WS(" ")
+    separator = _separator_ws(args)
     last = last.with_changes(comma=cst.Comma(whitespace_before=_WS(""), whitespace_after=separator))
-    new_arg = cst.Arg(
-        value=expr,
-        keyword=keyword,
-        equal=equal,
-        whitespace_after_arg=_WS(""),
-        comma=cst.MaybeSentinel.DEFAULT,
+    return (*args[:-1], last, _arg(expr, keyword, equal))
+
+
+def _arg(
+    expr: cst.BaseExpression,
+    keyword: cst.Name,
+    equal: cst.AssignEqual,
+    comma: cst.Comma | cst.MaybeSentinel = cst.MaybeSentinel.DEFAULT,
+) -> cst.Arg:
+    """A keyword argument, carrying no trailing comma unless one is given."""
+    return cst.Arg(
+        value=expr, keyword=keyword, equal=equal, whitespace_after_arg=_WS(""), comma=comma
     )
-    return (*args[:-1], last, new_arg)
 
 
 def _append_element(lst: cst.List, expr: cst.BaseExpression) -> cst.List:
     """An item appended to the end, keeping a multi-line list one item per line."""
     elements = list(lst.elements)
     if not elements:
-        element = cst.Element(value=expr, comma=cst.MaybeSentinel.DEFAULT)
-        return lst.with_changes(elements=(element,))
+        return lst.with_changes(elements=(_element(expr),))
     last = elements[-1]
     if isinstance(last.comma, cst.Comma):
-        old_comma = last.comma
-        between: cst.Comma
-        if len(elements) >= 2 and isinstance(elements[-2].comma, cst.Comma):
-            between = elements[-2].comma
-        elif isinstance(old_comma.whitespace_after, cst.ParenthesizedWhitespace):
-            indent_ws = _WS("    ")
-            if isinstance(lst.lbracket.whitespace_after, cst.ParenthesizedWhitespace):
-                indent_ws = lst.lbracket.whitespace_after.last_line
-            between = old_comma.with_changes(
-                whitespace_after=old_comma.whitespace_after.with_changes(last_line=indent_ws)
-            )
-        else:
-            between = old_comma
-        new_element = cst.Element(value=expr, comma=old_comma)
+        new_element = _element(expr, last.comma)
+        between = _between_comma(elements, last.comma, _element_indent(lst))
         elements[-1] = last.with_changes(comma=between)
         return lst.with_changes(elements=(*elements, new_element))
-    separator: cst.BaseParenthesizableWhitespace
-    if (
-        len(elements) >= 2
-        and isinstance(elements[-2].comma, cst.Comma)
-        and isinstance(elements[-2].comma.whitespace_after, cst.ParenthesizedWhitespace)
-    ):
-        separator = elements[-2].comma.whitespace_after
-    else:
-        separator = _WS(" ")
+    separator = _separator_ws(elements)
     elements[-1] = last.with_changes(
         comma=cst.Comma(whitespace_before=_WS(""), whitespace_after=separator)
     )
-    new_element = cst.Element(value=expr, comma=cst.MaybeSentinel.DEFAULT)
-    return lst.with_changes(elements=(*elements, new_element))
+    return lst.with_changes(elements=(*elements, _element(expr)))
+
+
+def _element(
+    expr: cst.BaseExpression,
+    comma: cst.Comma | cst.MaybeSentinel = cst.MaybeSentinel.DEFAULT,
+) -> cst.Element:
+    """A list element, carrying no trailing comma unless one is given."""
+    return cst.Element(value=expr, comma=comma)
+
+
+def _element_indent(lst: cst.List) -> cst.SimpleWhitespace:
+    """The indent for an appended item: the list's own when it is multi-line."""
+    if isinstance(lst.lbracket.whitespace_after, cst.ParenthesizedWhitespace):
+        return lst.lbracket.whitespace_after.last_line
+    return _WS("    ")
+
+
+def _prev_comma(items: Sequence[cst.Arg | cst.BaseElement]) -> cst.Comma | None:
+    """The trailing comma of the item before the last, or None if there is none."""
+    if len(items) < 2:
+        return None
+    prev = items[-2].comma
+    return prev if isinstance(prev, cst.Comma) else None
+
+
+def _between_comma(
+    items: Sequence[cst.Arg | cst.BaseElement],
+    old_comma: cst.Comma,
+    indent_ws: cst.SimpleWhitespace,
+) -> cst.Comma:
+    """The comma that sits between the last item and the one being appended.
+
+    A following item keeps the file's own multi-line comma where there is one;
+    otherwise the last item's comma is re-indented to the item's indent.
+    """
+    prev_comma = _prev_comma(items)
+    if prev_comma is not None:
+        return prev_comma
+    if not isinstance(old_comma.whitespace_after, cst.ParenthesizedWhitespace):
+        return old_comma
+    return old_comma.with_changes(
+        whitespace_after=old_comma.whitespace_after.with_changes(last_line=indent_ws)
+    )
+
+
+def _separator_ws(items: Sequence[cst.Arg | cst.BaseElement]) -> cst.BaseParenthesizableWhitespace:
+    """Whitespace after the last item when it has no trailing comma and we append."""
+    prev_comma = _prev_comma(items)
+    if prev_comma is None:
+        return _WS(" ")
+    if isinstance(prev_comma.whitespace_after, cst.ParenthesizedWhitespace):
+        return prev_comma.whitespace_after
+    return _WS(" ")
 
 
 def _merge_comments(
