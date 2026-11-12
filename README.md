@@ -6,20 +6,56 @@ writes the names, descriptions and messages. You steer it in one of three modes:
 `mob` (mobs and their loot) or `skill` (skills of any `kind`). Every change is reviewed before it touches your
 files, and the `.star` files stay the source of truth you can edit by hand at any time.
 
-## Engine prerequisite
+## Requirements
 
-`gups-builder` talks to the GUPS engine through the `gups` command-line tool. It needs an engine that provides
-`gups describe-world` writing `"format": 1` (Milestone 49 of `gups-engine`). Install the engine and make sure a
-`gups` binary is on your `PATH`, or point at it with `--gups` / the `gups` setting / the `GUPS_BIN` environment
-variable.
+- Python 3.12 or newer and [`uv`](https://docs.astral.sh/uv/).
+- A GUPS engine providing `gups describe-world` with `"format": 1` (Milestone 49 of `gups-engine`).
+- A GUPS world to work in (a directory you point `--world` at; the engine's `template-world/` is a good start —
+  copy it, don't build in place).
+- Two OpenAI-compatible chat endpoints, one per role (see [Configuring the models](#configuring-the-models)).
+  Local servers such as Ollama or `llama-server` work.
+
+## Building the engine and referencing the `gups` binary
+
+`gups-builder` never links against the engine; it runs the `gups` command-line tool as a subprocess (`describe-world`,
+`docs --json`, `lint`, `test`). Build the launcher from a `gups-engine` checkout (needs JDK 21+):
+
+```bash
+cd ../gups-engine
+./gradlew :cli:installDist
+# -> cli/build/install/gups/bin/gups
+```
+
+The binary is looked up in this order, and the first one set wins:
+
+1. `--gups PATH` on the command line (a global flag, before the subcommand),
+2. the `GUPS_BIN` environment variable,
+3. `gups = "..."` in `<world>/.builder/config.toml`, then in `~/.config/gups-builder/config.toml`,
+4. `gups` on your `PATH`.
+
+A path given through 1–3 must be an executable file; it is an error, not a fallback, if it is not. Either put the
+launcher's `bin` directory on your `PATH`, or export the variable:
+
+```bash
+export GUPS_BIN="$PWD/../gups-engine/cli/build/install/gups/bin/gups"
+```
+
+`gups-builder models` prints the `gups` path in effect.
 
 ## Installation
+
+To install the command:
 
 ```bash
 uv tool install .
 ```
 
-This builds the package and installs the `gups-builder` command.
+To work on it from a checkout instead, and run it without installing:
+
+```bash
+uv sync
+uv run gups-builder --help
+```
 
 ## Configuring the models
 
@@ -128,3 +164,40 @@ created, with its `package.star`, on the first `/write`. Skill mode needs a worl
 The session, the call log and the prompt history live under `<world>/.builder/` — `sessions/<name>.json`,
 `logs/<name>.jsonl` and `history` — and a `.gitignore` there keeps them out of version control. Resume a session with
 `gups-builder resume <name>`, and list the sessions of a world with `gups-builder sessions`.
+
+## Development
+
+The tool is built milestone by milestone from [docs/SPEC.md](docs/SPEC.md), which is the source of truth for
+behaviour; each milestone is planned in `docs/MILESTONE_N.md`. [AGENTS.md](AGENTS.md) has the working conventions
+(test-first, the "skill, not spell" naming rule, the engine boundary).
+
+Before considering a change done, all four must pass:
+
+```bash
+uv run ruff format --check
+uv run ruff check
+uv run mypy
+uv run pytest -rs
+```
+
+Tests never call a real model; they drive the builder with a `FakeLlm`. Tests marked `engine` need a real `gups`
+binary and skip themselves without one — CI has none, so run them locally against your build and check that nothing
+is reported as skipped:
+
+```bash
+GUPS_BIN=../gups-engine/cli/build/install/gups/bin/gups uv run pytest -rs
+```
+
+### Layout
+
+| Path                         | Contents                                                                      |
+|------------------------------|-------------------------------------------------------------------------------|
+| `src/gups_builder/cli.py`    | Argument parsing and subcommands                                              |
+| `src/gups_builder/repl.py`   | The interactive session and its `/` commands                                  |
+| `src/gups_builder/config.py` | Layered configuration (flags, env, world file, user file)                     |
+| `src/gups_builder/engine/`   | Wrapper around the `gups` subprocess, world description, lint parsing, staging |
+| `src/gups_builder/llm/`      | OpenAI-compatible client, structured-reply repair loop, call log, `FakeLlm`   |
+| `src/gups_builder/modes/`    | The `area`, `mob` and `skill` pipelines and the generated test                |
+| `src/gups_builder/star/`     | Formatting-preserving reading and editing of `.star` files (libcst)           |
+| `src/gups_builder/grid/`     | Integer-grid room placement and ASCII maps                                    |
+| `src/gups_builder/prompts/`  | Prompt templates                                                              |
