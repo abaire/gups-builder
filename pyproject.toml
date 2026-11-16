@@ -18,9 +18,9 @@ gups-builder = "gups_builder.cli:main"
 
 [dependency-groups]
 dev = [
-    "pytest",
-    "ruff",
-    "mypy",
+    "pytest==9.2.0",
+    "ruff==0.17.4",
+    "mypy==2.4.1",
 ]
 
 [build-system]
@@ -37,6 +37,9 @@ files = ["src", "tests"]
 [tool.ruff]
 line-length = 100
 extend-exclude = ["docs"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
 
 [tool.pytest.ini_options]
 markers = [
