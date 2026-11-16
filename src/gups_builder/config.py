@@ -3,6 +3,7 @@ from __future__ import annotations
 import tomllib
 from typing import TYPE_CHECKING, Any, Literal
 
+import tomli_w
 from pydantic import BaseModel
 
 if TYPE_CHECKING:
@@ -162,9 +163,42 @@ def _load_max_repairs(
     return 3
 
 
+def world_config_path(world: Path) -> Path:
+    """Return the world-local configuration file path."""
+    return world / ".builder" / "config.toml"
+
+
+def user_config_path(home: Path) -> Path:
+    """Return the user-global configuration file path."""
+    return home / ".config" / "gups-builder" / "config.toml"
+
+
+def save_config_value(
+    path: Path, role: Literal["logic", "prose"] | None, field: str, value: Any
+) -> None:
+    """Update a single configuration field in a TOML file, creating it if absent."""
+    data = _read_toml(path)
+    target: dict[str, Any]
+    if role is None:
+        target = data
+    else:
+        existing = data.get(role)
+        if isinstance(existing, dict):
+            target = existing
+        else:
+            target = {}
+            data[role] = target
+    if value is None:
+        target.pop(field, None)
+    else:
+        target[field] = value
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(tomli_w.dumps(data))
+
+
 def load_config(world: Path, cli: dict[str, str], env: Mapping[str, str], home: Path) -> Config:
-    world_cfg = _read_toml(world / ".builder" / "config.toml")
-    user_cfg = _read_toml(home / ".config" / "gups-builder" / "config.toml")
+    world_cfg = _read_toml(world_config_path(world))
+    user_cfg = _read_toml(user_config_path(home))
     return Config(
         logic=_load_role("logic", 0.2, cli, env, world_cfg, user_cfg),
         prose=_load_role("prose", 0.8, cli, env, world_cfg, user_cfg),

@@ -2,7 +2,13 @@ from pathlib import Path
 
 import pytest
 
-from gups_builder.config import Config, load_config
+from gups_builder.config import (
+    Config,
+    load_config,
+    save_config_value,
+    user_config_path,
+    world_config_path,
+)
 
 
 def _world_with(tmp: Path, toml: str) -> Path:
@@ -122,3 +128,32 @@ def test_bad_number_names_its_source(tmp_path: Path) -> None:
     world = _world_with(tmp_path, 'max_repairs = "many"\n')
     with pytest.raises(ValueError, match="world config"):
         load_config(world, {}, {}, tmp_path / "home")
+
+
+def test_config_paths(tmp_path: Path) -> None:
+    assert world_config_path(tmp_path / "w") == tmp_path / "w" / ".builder" / "config.toml"
+    assert (
+        user_config_path(tmp_path / "h")
+        == tmp_path / "h" / ".config" / "gups-builder" / "config.toml"
+    )
+
+
+def test_save_config_value_creates_and_updates(tmp_path: Path) -> None:
+    path = user_config_path(tmp_path / "home")
+    save_config_value(path, "logic", "model", "qwen2.5:14b")
+    save_config_value(path, "logic", "temperature", 0.3)
+    save_config_value(path, None, "max_repairs", 5)
+
+    cfg = load_config(tmp_path / "world", {}, {}, tmp_path / "home")
+    assert cfg.logic.model == "qwen2.5:14b"
+    assert cfg.logic.temperature == 0.3
+    assert cfg.max_repairs == 5
+
+
+def test_save_config_value_none_removes_key(tmp_path: Path) -> None:
+    path = world_config_path(tmp_path / "world")
+    save_config_value(path, "logic", "api_key", "secret")
+    assert load_config(tmp_path / "world", {}, {}, tmp_path / "home").logic.api_key == "secret"
+
+    save_config_value(path, "logic", "api_key", None)
+    assert load_config(tmp_path / "world", {}, {}, tmp_path / "home").logic.api_key is None

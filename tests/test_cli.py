@@ -162,3 +162,25 @@ def test_area_does_not_offer_a_session_on_another_package(
     assert started[0].state.name == "mansion-2"
     assert started[0].state.package == "zones/b/mansion"
     assert "mansion-2" in capsys.readouterr().out
+
+
+def test_models_tty_launches_tui_and_check_bypasses_tui(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tui_calls: list[Path] = []
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    monkeypatch.setattr("sys.stdout.isatty", lambda: True)
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path / "home")
+
+    def fake_tui(world: Path, *_args: object, **_kwargs: object) -> int:
+        tui_calls.append(world)
+        return 0
+
+    monkeypatch.setattr(cli, "run_models_tui", fake_tui)
+
+    assert cli.main(["--world", str(tmp_path / "world"), "models"]) == 0
+    assert tui_calls == [tmp_path / "world"]
+
+    assert cli.main(["--world", str(tmp_path / "world"), "models", "--check"]) == 1
+    assert len(tui_calls) == 1
+    assert "logic: FAILED: the model is not configured" in capsys.readouterr().out

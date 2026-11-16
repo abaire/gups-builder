@@ -76,9 +76,7 @@ class HttpLlm:
         if not rc.model:
             msg = f"the {role} model is not configured"
             raise LlmError(msg)
-        headers: dict[str, str] = {}
-        if rc.api_key:
-            headers["Authorization"] = f"Bearer {rc.api_key}"
+        headers = _auth_headers(rc)
         if rc.structured != "json_schema" and json_schema is not None:
             messages = _append_schema(messages, json_schema)
         started = time.monotonic()
@@ -157,3 +155,38 @@ class HttpLlm:
             msg = f"{role} request to {rc.base_url} got a reply with no text content"
             raise LlmError(msg)
         return content, None
+
+    def list_models(self, role: Role) -> list[str]:
+        """Query the OpenAI-compatible ``/models`` endpoint and return sorted model ids."""
+        rc = self._config.logic if role == "logic" else self._config.prose
+        url = f"{rc.base_url.rstrip('/')}/models"
+        try:
+            response = self._http.get(
+                url,
+                headers=_auth_headers(rc),
+                timeout=min(rc.timeout_s, 15.0),
+            )
+        except httpx.HTTPError as error:
+            msg = f"{role} request to {url} failed: {error}"
+            raise LlmError(msg) from error
+        if response.status_code != HTTPStatus.OK:
+            msg = f"{role} request to {url} got HTTP {response.status_code}: {response.text[:200]}"
+            raise LlmError(msg)
+        try:
+            data = response.json()["data"]
+        except (ValueError, KeyError, TypeError) as error:
+            msg = f"{role} request to {url} got an unusable reply: {response.text[:200]}"
+            raise LlmError(msg) from error
+        if not isinstance(data, list):
+            msg = f"{role} request to {url} got an unusable reply: data is not a list"
+            raise LlmError(msg)
+        ids = [
+            entry["id"]
+            for entry in data
+            if isinstance(entry, dict) and isinstance(entry.get("id"), str)
+        ]
+        return sorted(ids)
+
+
+def _auth_headers(rc: RoleConfig) -> dict[str, str]:
+    return {"Authorization": f"Bearer {rc.api_key}"} if rc.api_key else {}

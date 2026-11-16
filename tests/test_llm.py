@@ -464,3 +464,45 @@ def test_models_reports_json_schema_rejected_even_when_fallback_works(
     assert "logic: json_schema OK" not in out
     assert "logic: json_schema not honoured (400 from http://127.0.0.1:11434/v1)" in out
     assert "prose: json_schema not honoured (400 from http://127.0.0.1:11434/v1)" in out
+
+
+def test_list_models_returns_sorted_ids_and_sends_auth() -> None:
+    seen_headers: list[dict[str, str]] = []
+    seen_urls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_urls.append(str(request.url))
+        seen_headers.append(dict(request.headers))
+        return httpx.Response(
+            200,
+            json={
+                "object": "list",
+                "data": [
+                    {"id": "qwen2.5:14b", "object": "model"},
+                    {"id": "llama3.2:latest", "object": "model"},
+                ],
+            },
+        )
+
+    llm = HttpLlm(
+        _config(model="", api_key="secret-token"),
+        transport=httpx.MockTransport(handler),
+    )
+    models = llm.list_models("logic")
+    assert models == ["llama3.2:latest", "qwen2.5:14b"]
+    assert seen_urls == ["http://127.0.0.1:11434/v1/models"]
+    assert seen_headers[0].get("authorization") == "Bearer secret-token"
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        httpx.Response(500, text="server error"),
+        httpx.Response(200, text="not json"),
+        httpx.Response(200, json={"object": "list"}),
+    ],
+)
+def test_list_models_errors_raise_llm_error(response: httpx.Response) -> None:
+    llm = HttpLlm(_config(model=""), transport=httpx.MockTransport(lambda _r: response))
+    with pytest.raises(LlmError, match="logic"):
+        llm.list_models("logic")

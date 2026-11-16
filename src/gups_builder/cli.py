@@ -19,6 +19,7 @@ from gups_builder.config import Config, RoleConfig, load_config
 from gups_builder.engine.gups import EngineError, Gups
 from gups_builder.llm.client import HttpLlm, LlmError, Message
 from gups_builder.llm.log import CallLog
+from gups_builder.models_tui import run_models_tui
 from gups_builder.repl import Repl, context_factory
 from gups_builder.session import Mode, Session, SessionState
 
@@ -68,7 +69,14 @@ def _refusal_reason(error: Exception) -> str:
 
 def _run_models(args: argparse.Namespace) -> int:
     cli = _build_cli_dict(args)
-    config: Config = load_config(Path(args.world), cli, os.environ, Path.home())
+    world = Path(args.world)
+    home = Path.home()
+    if not args.check and sys.stdin.isatty() and sys.stdout.isatty():
+        return run_models_tui(world, cli, os.environ, home, _make_client)
+    if not args.check:
+        print("No terminal attached, falling back to --check mode")
+
+    config: Config = load_config(world, cli, os.environ, home)
     print(_format_role("logic", config.logic))
     print(_format_role("prose", config.prose))
     gups = config.gups if config.gups is not None else "(not set)"
@@ -214,7 +222,13 @@ def main(argv: list[str] | None = None) -> int:
     resume = sub.add_parser("resume")
     resume.add_argument("session")
     sub.add_parser("sessions")
-    sub.add_parser("models")
+
+    models_parser = sub.add_parser("models")
+    models_parser.add_argument(
+        "--check",
+        action="store_true",
+        help="print configuration and probe models without opening the interactive TUI",
+    )
 
     args = parser.parse_args(argv)
 

@@ -117,7 +117,14 @@ Every call is appended to the JSONL call log as one JSON object with `ts` (ISO 8
 a non-200) is logged with an empty `reply` and the error as its message. The REPL (Phase 10) puts the log at
 `<world>/.builder/logs/<session>.jsonl`.
 
-`gups-builder models` first prints the two roles and the `gups` path as in §2, then sends each role a plain
+When attached to a terminal (and `--check` is not passed), `gups-builder models` opens an interactive TUI showing the
+current configuration; pressing Enter on a setting allows it to be edited and saved to the user or world `config.toml`
+file (toggled with `t`, defaulting to world when `<world>/.builder/config.toml` exists). Pressing Enter on `model`
+queries `GET <base_url>/models` on the role's OpenAI-compatible server to enumerate available models into a selectable
+list, falling back to manual entry if the query fails or returns no models; `c` probes both roles as below.
+
+With `--check` or when standard input/output is not a terminal, `gups-builder models` first prints the two roles and
+the `gups` path as in §2, then sends each role a plain
 request with a single system message `Reply with the single word OK.` and no schema, printing `<role>: OK
 (<t> s)` or `<role>: FAILED: <reason>`. Then, for each role whose `structured` is `json_schema`, it sends one
 schema-constrained request — the schema an object with a required string `word`, the user message `Reply with
