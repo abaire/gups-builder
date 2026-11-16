@@ -20,7 +20,16 @@ from pydantic import BaseModel
 from gups_builder.grid.place import room_id
 from gups_builder.llm.client import Message
 from gups_builder.llm.structured import call_structured
-from gups_builder.modes.common import Context, Proposal, allowed_values, finalize
+from gups_builder.modes.common import (
+    Context,
+    Proposal,
+    TurnPrompt,
+    allowed_values,
+    brief_request,
+    finalize,
+    one_question,
+    turn_sections,
+)
 from gups_builder.modes.skill_checks import (
     AddSkill,
     EffectSpec,
@@ -48,7 +57,7 @@ from gups_builder.star.render import render_string
 from gups_builder.star.values import Value, is_editable
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable
+    from collections.abc import Callable, Iterable, Sequence
 
     from gups_builder.engine.api import ApiModel
     from gups_builder.engine.world import WorldDescription
@@ -194,17 +203,23 @@ class _CreateState:
     fingerprint: str | None = None
 
 
-def create_skill(ctx: Context, request: str) -> SkillBrief | Proposal:
-    """A new skill: the brief, then the plan, prose and ops inside the repair loop."""
+def create_skill(
+    ctx: Context, request: str, earlier: Sequence[tuple[str, str]] = ()
+) -> SkillBrief | Proposal:
+    """A new skill: the brief, then the plan, prose and ops inside the repair loop.
+
+    ``earlier`` is the brief's conversation so far, as for ``create_area``.
+    """
     logic_budget = ctx.config.logic.context_tokens - ctx.config.logic.max_tokens
     brief_prompt = load_prompt(
         "skill_brief",
         existing_skills=_existing_skills_text(ctx),
         existing_mobs=_existing_mobs_text(ctx),
     )
+    # The conversation goes last: it grows each turn, and the text before it stays cached.
     sections = [
-        (0, request),
         (0, brief_prompt),
+        (0, brief_request(request, earlier)),
     ]
     brief = call_structured(
         ctx.llm,
@@ -215,7 +230,10 @@ def create_skill(ctx: Context, request: str) -> SkillBrief | Proposal:
         ],
         SkillBrief,
         ctx.config.max_repairs,
+        status=ctx.status,
+        step="drafting skill brief",
     )
+    brief = one_question(brief)
     if brief.questions:
         return brief
     state = _CreateState()
@@ -228,7 +246,9 @@ def _fingerprint(skill: PlannedSkill, notes: str) -> str:
     return json.dumps([skill.concept, skill.kind, skill.target, skill.range, notes])
 
 
-def _prose_call(ctx: Context, skill: PlannedSkill, notes: str) -> UnrecognizedProse:
+def _prose_call(
+    ctx: Context, skill: PlannedSkill, notes: str, step: str | None = None
+) -> UnrecognizedProse:
     prompt = load_prompt(
         "skill_prose",
         notes=notes,
@@ -248,6 +268,8 @@ def _prose_call(ctx: Context, skill: PlannedSkill, notes: str) -> UnrecognizedPr
         UnrecognizedProse,
         ctx.config.max_repairs,
         extra_check=lambda prose: prose_problems(skill, prose),
+        status=ctx.status,
+        step=step,
     )
 
 
@@ -286,9 +308,12 @@ def _plan_sections(
     return sections
 
 
-def _plan_call(ctx: Context, sections: list[tuple[int, str]]) -> PlannedSkill:
+def _plan_call(
+    ctx: Context, sections: list[tuple[int, str]], problems: list[str] | None = None
+) -> PlannedSkill:
     logic_budget = ctx.config.logic.context_tokens - ctx.config.logic.max_tokens
     taken = declared_ids(ctx)
+    step = "repairing skill" if problems else "planning skill"
     return call_structured(
         ctx.llm,
         "logic",
@@ -299,6 +324,8 @@ def _plan_call(ctx: Context, sections: list[tuple[int, str]]) -> PlannedSkill:
         PlannedSkill,
         ctx.config.max_repairs,
         extra_check=lambda s: skill_problems(ctx, s, taken),
+        status=ctx.status,
+        step=step,
     )
 
 
@@ -323,11 +350,11 @@ def _create_summary(plan: PlannedSkill) -> str:
 
 
 def _build(ctx: Context, brief: SkillBrief, state: _CreateState, problems: list[str]) -> Proposal:
-    plan = _plan_call(ctx, _plan_sections(ctx, brief, state, problems))
+    plan = _plan_call(ctx, _plan_sections(ctx, brief, state, problems), problems=problems)
     state.plan = plan
     fingerprint = _fingerprint(plan, brief.notes)
     if state.prose is None or state.fingerprint != fingerprint:
-        state.prose = _prose_call(ctx, plan, brief.notes)
+        state.prose = _prose_call(ctx, plan, brief.notes, step=f"writing skill prose ({plan.id})")
         state.fingerprint = fingerprint
     return Proposal(
         ops=_new_skill_ops(ctx, plan, state.prose),
@@ -507,12 +534,6 @@ def _skills_text(ctx: Context) -> str:
     return "\n".join(lines) if lines else "none"
 
 
-def _history_text(history: list[Message]) -> str:
-    if not history:
-        return "none"
-    return "\n".join(f"{m.role}: {m.content}" for m in history[-6:])
-
-
 def _turn_call(
     ctx: Context,
     message: str,
@@ -521,14 +542,8 @@ def _turn_call(
 ) -> SkillTurn:
     """The turn for the message; ``repair`` is lint's problems and the turn they were in."""
     budget = ctx.config.logic.context_tokens - ctx.config.logic.max_tokens
-    turn_prompt = load_prompt(
-        "skill_turn",
-        catalogue=_CATALOGUE,
-        skills=_skills_text(ctx),
-        history=_history_text(history),
-        message=message,
-    )
-    sections = [(0, turn_prompt)]
+    head = load_prompt("skill_turn", catalogue=_CATALOGUE, skills=_skills_text(ctx))
+    sections = turn_sections(TurnPrompt(head, history, message), budget)
     if repair is not None:
         problems, previous = repair
         sections.append(
@@ -539,6 +554,7 @@ def _turn_call(
                 ),
             )
         )
+    step = "repairing skill edits" if repair is not None else "planning skill edits"
     return call_structured(
         ctx.llm,
         "logic",
@@ -549,6 +565,8 @@ def _turn_call(
         SkillTurn,
         ctx.config.max_repairs,
         extra_check=lambda turn: turn_problems(ctx, turn),
+        status=ctx.status,
+        step=step,
     )
 
 
@@ -626,6 +644,8 @@ def _rewrite_call(ctx: Context, skill_id: str, guidance: str) -> UnrecognizedPro
         UnrecognizedProse,
         ctx.config.max_repairs,
         extra_check=lambda prose: prose_problems(checked, prose),
+        status=ctx.status,
+        step=f"rewriting skill prose ({skill_id})",
     )
 
 

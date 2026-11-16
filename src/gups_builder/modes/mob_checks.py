@@ -140,8 +140,10 @@ def full_label(label: str, package: str) -> str:
     return f"//{package}:{label.removeprefix(':')}"
 
 
-def local_id(label: str, package: str) -> str | None:
+def local_id(label: str | None, package: str) -> str | None:
     """The id of a label in this package, or None for another package's label."""
+    if label is None:
+        return None
     full = full_label(label, package)
     prefix = f"//{package}:"
     return full.removeprefix(prefix) if full.startswith(prefix) else None

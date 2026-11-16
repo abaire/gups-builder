@@ -153,6 +153,21 @@ def test_a_brief_with_questions_is_returned_as_is(
     assert len(llm.calls) == 1
 
 
+def test_a_brief_hears_its_conversation_and_asks_one_question(
+    tmp_path: Path, world_min: WorldDescription
+) -> None:
+    brief = json.loads(_load(CREATE, "brief_questions.json"))
+    brief["questions"] = ["How much mana?", "Who teaches it?"]
+    llm = FakeLlm({"logic": [json.dumps(brief)]})
+    ctx, _ = _ctx(tmp_path, llm, world_min)
+    earlier = [("user", "a fire spell"), ("builder", "Single target or area?")]
+    result = create_skill(ctx, "single target", earlier)
+    assert isinstance(result, SkillBrief)
+    assert result.questions == ["How much mana?"]
+    prompt = [m.content for m in llm.calls[0][1] if m.role == "user"][-1]
+    assert prompt.endswith("User: a fire spell\nYou: Single target or area?\nUser: single target")
+
+
 def test_creation_produces_the_expected_ops(tmp_path: Path, world_min: WorldDescription) -> None:
     llm = FakeLlm(
         {

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
+from gups_builder.modes.area_checks import AreaBrief, RoomCount
 from gups_builder.session import PendingChange, Session
 from gups_builder.star.ops import AppendItem, SetArg
 
@@ -110,3 +111,30 @@ def test_pending_change_round_trips(tmp_path: Path) -> None:
     assert loaded.state.pending.base_hashes == {"rooms.star": "abc"}
     assert isinstance(loaded.state.pending.ops[0], SetArg)
     assert isinstance(loaded.state.pending.link_ops[0], AppendItem)
+
+
+def test_planning_state_and_brief_round_trip(tmp_path: Path) -> None:
+    world = tmp_path / "world"
+    world.mkdir()
+    sess = Session.create(world, "area", "zones/mansion")
+    assert sess.state.planning is False
+    assert sess.state.plan_brief is None
+
+    sess.state.planning = True
+    sess.state.plan_brief = AreaBrief(
+        title="The Sunken Library",
+        theme="Flooded archives beneath the city",
+        style_notes="Damp stone, bioluminescent moss, hushed echoes",
+        room_count=RoomCount(min=4, max=6),
+        room_concepts=["vestibule: flooded entry steps", "stacks: half-submerged bookshelves"],
+        link_to="//zones/tutorial:gate",
+        questions=["Should there be a locked vault?"],
+    )
+    sess.save()
+
+    loaded = Session.load(world, "mansion")
+    assert loaded.state.planning is True
+    assert loaded.state.plan_brief is not None
+    assert loaded.state.plan_brief.title == "The Sunken Library"
+    assert loaded.state.plan_brief.room_count == RoomCount(min=4, max=6)
+    assert loaded.state.plan_brief.link_to == "//zones/tutorial:gate"

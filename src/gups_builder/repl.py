@@ -14,6 +14,7 @@ import ast
 import hashlib
 import os
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 
@@ -22,13 +23,21 @@ import libcst as cst
 from gups_builder.engine.gups import EngineError
 from gups_builder.grid.ascii import render_map
 from gups_builder.grid.derive import DIRECTION_DELTAS
-from gups_builder.grid.model import Connection, Coord, DoorSpec, Grid, GridRoom
+from gups_builder.grid.model import Connection, Coord, DoorSpec, Grid, GridRoom, RandomExit
 from gups_builder.grid.place import place_existing, room_id
-from gups_builder.llm.client import LlmClient, LlmError, Message
+from gups_builder.llm.client import ContextUsage, LlmClient, LlmError, Message
 from gups_builder.llm.structured import StructuredCallError
+from gups_builder.log_viewer import run_log_viewer
 from gups_builder.modes import testgen
-from gups_builder.modes.area import AreaBrief, area_turn, create_area
-from gups_builder.modes.area_checks import grid_from_coords
+from gups_builder.modes.area import (
+    AreaBrief,
+    area_turn,
+    build_from_plan,
+    create_area,
+    format_brief,
+)
+from gups_builder.modes.area_checks import brief_problems, grid_from_coords, normalize_brief
+from gups_builder.modes.area_plan import PlanRequest, plan_area_turn
 from gups_builder.modes.common import Context, Engine, Proposal, Turn
 from gups_builder.modes.mob import MobBrief, create_mobs, mob_turn
 from gups_builder.modes.skill import SkillBrief, create_skill, skill_turn
@@ -42,9 +51,10 @@ from gups_builder.star.reader import (
     read_package,
 )
 from gups_builder.star.writer import apply_ops
+from gups_builder.terminal import TurnStatus
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable
+    from collections.abc import Callable, Iterable, Iterator
 
     from rich.console import Console
 
@@ -148,6 +158,29 @@ def _decl_passages(decl: DeclView, package: str, room_ids: set[str]) -> list[Con
         if local is not None:
             passages.append(Connection(a=decl.id, b=local, door=door))
     return passages
+
+
+def _random_targets(to: Value, package: str, room_ids: set[str]) -> list[str] | None:
+    """The package's rooms a list-valued ``to`` picks among; None unless all are in it."""
+    if not isinstance(to, list) or not to:
+        return None
+    targets = [_local_id(t, package) if isinstance(t, str) else None for t in to]
+    if any(t not in room_ids for t in targets):
+        return None
+    return [t for t in targets if t is not None]
+
+
+def _decl_random_exits(decl: DeclView, package: str, room_ids: set[str]) -> list[RandomExit]:
+    """The room's random exits whose rooms are all in the package."""
+    exits = decl.args.get("exits")
+    found: list[RandomExit] = []
+    for item in exits if isinstance(exits, list) else []:
+        kwargs = _call_kwargs(item, "exit")
+        name = _first_direction(item.get("args") if isinstance(item, dict) else None)
+        targets = _random_targets(kwargs.get("to"), package, room_ids) if kwargs else None
+        if name is not None and targets is not None:
+            found.append(RandomExit(room=decl.id, exit=name, to=targets))
+    return found
 
 
 def _unique_passages(connections: Iterable[Connection]) -> list[Connection]:
@@ -296,8 +329,16 @@ def _write_file(path: Path, text: str) -> None:
         raise
 
 
+def session_log_path(world: Path, session_name: str) -> Path:
+    return world / ".builder" / "logs" / f"{session_name}.jsonl"
+
+
 def context_factory(
-    world: Path, package: str, engine: Engine, llm: LlmClient, config: Config
+    world: Path,
+    package: str,
+    engine: Engine,
+    llm: LlmClient,
+    config: Config,
 ) -> Callable[[], Context]:
     """A function that builds a fresh Context from the package's files and the engine.
 
@@ -336,17 +377,44 @@ class Repl:
         ctx_factory: Callable[[], Context],
         console: Console,
         read_line: Callable[[str], str],
+        view_log: Callable[[Path], None] | None = None,
     ) -> None:
         self.session = session
         self._factory = ctx_factory
         self.console = console
         self.read_line = read_line
+        # The turn in progress, if any: its live status line shows _report_status updates.
+        self._active_turn: TurnStatus | None = None
+        # The last model call's context usage, carried into the next turn's status line.
+        self._usage = ""
         self._world = session.world
         self._pkg_dir = session.world / session.state.package
         self._ctx: Context | None = None
         self._load_errors: list[str] = []
         self._hashes: dict[str, str] = {}
-        self._load()
+        self._view_log = view_log or run_log_viewer
+        badge = f"[{session.state.mode}] {session.state.package}"
+        with self._turn_status(badge, "Loading package..."):
+            self._load()
+
+    @contextmanager
+    def _turn_status(self, badge: str, initial_status: str) -> Iterator[None]:
+        with TurnStatus(self.console, badge, initial_status=initial_status) as ts:
+            ts.update_usage(self._usage)
+            self._active_turn = ts
+            try:
+                yield
+            finally:
+                self._active_turn = None
+
+    def _report_status(self, msg: str) -> None:
+        if self._active_turn is not None:
+            self._active_turn.update(msg)
+
+    def _report_usage(self, usage: ContextUsage) -> None:
+        self._usage = usage.text()
+        if self._active_turn is not None:
+            self._active_turn.update_usage(self._usage)
 
     def run(self) -> int:
         self._say(
@@ -355,7 +423,8 @@ class Repl:
         )
         while True:
             try:
-                line = self.read_line("> ")
+                prompt = "(plan) > " if self.session.state.planning else "> "
+                line = self.read_line(prompt)
             except KeyboardInterrupt:
                 continue
             except EOFError:
@@ -371,27 +440,62 @@ class Repl:
         if line.split()[0] == "/quit":
             self.session.save()
             return False
-        try:
-            if line.startswith("/"):
-                self._slash(line)
-            else:
-                self._turn(line)
-        except KeyboardInterrupt:
-            self._say("cancelled")
-        except (LlmError, StructuredCallError, EngineError) as error:
-            self._say(f"error: {error}")
+        mode = self.session.state.mode
+        planning = self.session.state.planning
+        pkg = self.session.state.package
+        badge = f"[{mode}{' | plan' if planning else ''}] {pkg}"
+
+        with self._turn_status(badge, "Processing..."):
+            try:
+                if line.startswith("/"):
+                    self._slash(line)
+                else:
+                    self._turn(line)
+            except KeyboardInterrupt:
+                self._say("cancelled")
+            except StructuredCallError as error:
+                self._report_failed_call(error)
+            except LlmError as error:
+                self._say(f"error: {error}")
+                self._say(self._log_hint())
+            except EngineError as error:
+                self._say(f"error: {error}")
         self.session.save()
         return True
+
+    @property
+    def log_path(self) -> Path:
+        """The session's call log; the CLI hands the model client the same path."""
+        return session_log_path(self._world, self.session.state.name)
+
+    def _log_hint(self) -> str:
+        return f"The full exchange is in {self.log_path}; /log to browse it."
+
+    def _report_failed_call(self, error: StructuredCallError) -> None:
+        """Every attempt's problems, so a repair that never converged can be read in order."""
+        what = f" for {error.step}" if error.step else ""
+        total = len(error.errors)
+        self._say(f"error: model failed to produce a valid reply{what} after {total} attempts")
+        for number, problems in enumerate(error.errors, 1):
+            self._say(f"attempt {number} of {total}:\n{problems}")
+        if error.note:
+            self._say(error.note)
+        self._say(self._log_hint())
 
     def _say(self, text: str) -> None:
         # Everything printed is plain text: names, prose, diffs and the map's "[A]" cells
         # all contain brackets that rich would otherwise read as markup.
-        self.console.print(text, markup=False, highlight=False)
+        if self._active_turn is None:
+            self.console.print(text, markup=False, highlight=False)
+            return
+        with self._active_turn.printing():
+            self.console.print(text, markup=False, highlight=False)
 
     # -- the context --------------------------------------------------------
 
     def _load(self) -> None:
         """Rebuild the context; a file that doesn't parse or a failing engine leaves none."""
+        self._report_status("Loading world state (gups describe-world)...")
         try:
             ctx = self._factory()
         except StarParseError as error:
@@ -400,6 +504,8 @@ class Repl:
         except EngineError as error:
             self._fail([str(error)])
             return
+        ctx.status = self._report_status
+        ctx.llm.set_usage_listener(self._report_usage)
         self._ctx = ctx
         self._load_errors = []
         self._hashes = dict(ctx.view.files)
@@ -460,14 +566,25 @@ class Repl:
             for role, content in self.session.state.history
         ]
 
-    def _created(self, ctx: Context, result: AreaBrief | MobBrief | SkillBrief | Proposal) -> None:
-        """A mode's first answer: questions about the brief, or a proposal."""
+    def _created(
+        self, ctx: Context, message: str, result: AreaBrief | MobBrief | SkillBrief | Proposal
+    ) -> None:
+        """A mode's first answer: a question about the brief, or a proposal."""
+        state = self.session.state
         if isinstance(result, Proposal):
+            state.brief_draft = []
+            if state.mode == "area":
+                state.plan_brief = None  # the draft /build would have used is built now
             self._offer(ctx, result, dict(result.grid or {}), {})
             return
-        for q in result.questions:
-            self._say(q)
-        self.session.state.history.append(("builder", " ".join(result.questions)))
+        question = " ".join(result.questions)
+        self._say(question)
+        state.brief_draft += [("user", message), ("builder", question)]
+        state.history.append(("builder", question))
+        if isinstance(result, AreaBrief):
+            # /build builds from this draft as it stands, its open question left to defaults.
+            state.plan_brief = result
+            self._say("(answer, or /build to build from the draft as it stands)")
 
     def _reply(self, turn: Turn, message: str) -> None:
         """A turn that proposes nothing: its reply, and a note when it is for another mode."""
@@ -483,9 +600,38 @@ class Repl:
         self._propose(ctx, proposal, grid, before)
         self.session.state.history.append(("builder", proposal.summary))
 
+    def _area_plan_turn(self, ctx: Context, message: str, history: list[Message]) -> None:
+        state = self.session.state
+        cursor = min(state.plan_folded, len(history))
+        result = plan_area_turn(
+            ctx,
+            PlanRequest(
+                message=message,
+                history=history[cursor:],
+                current_brief=state.plan_brief,
+                grid_coords=state.grid,
+                folded_before=cursor > 0,
+            ),
+        )
+        if result.folded:
+            state.plan_folded = cursor + result.folded
+            self._say(f"(folded {result.folded} earlier messages into the decisions)")
+        brief = result.turn.brief
+        state.plan_brief = brief
+        self._say(format_brief(brief))
+        for decision in result.dropped:
+            self._say(f"no longer in the decisions: {decision}")
+        self._say(result.turn.reply)
+        for q in brief.questions[:1]:
+            self._say(q)
+        state.history.append(("builder", result.turn.reply))
+
     def _area_turn(self, ctx: Context, message: str, history: list[Message]) -> None:
+        if self.session.state.planning:
+            self._area_plan_turn(ctx, message, history)
+            return
         if not _has_decls(ctx, "room"):
-            self._created(ctx, create_area(ctx, message))
+            self._created(ctx, message, create_area(ctx, message, self.session.state.brief_draft))
             return
         before, _ = place_existing(
             ctx.world.rooms_in(ctx.package), ctx.package, self.session.state.grid
@@ -509,7 +655,7 @@ class Repl:
             )
             return
         if not _has_decls(ctx, "mob"):
-            self._created(ctx, create_mobs(ctx, message))
+            self._created(ctx, message, create_mobs(ctx, message, self.session.state.brief_draft))
             return
         turn, proposal = mob_turn(ctx, message, history)
         if proposal is None:
@@ -530,7 +676,7 @@ class Repl:
             )
             return
         if not _has_decls(ctx, "skill"):
-            self._created(ctx, create_skill(ctx, message))
+            self._created(ctx, message, create_skill(ctx, message, self.session.state.brief_draft))
             return
         turn, proposal = skill_turn(ctx, message, history)
         if proposal is None:
@@ -592,32 +738,99 @@ class Repl:
         connections = _unique_passages(
             c for decl in rooms for c in _decl_passages(decl, ctx.package, room_ids)
         )
-        grid = Grid(rooms=grid_rooms, connections=connections, portals=[])
+        random_exits = [
+            r for decl in rooms for r in _decl_random_exits(decl, ctx.package, room_ids)
+        ]
+        grid = Grid(
+            rooms=grid_rooms, connections=connections, portals=[], random_exits=random_exits
+        )
         return grid, _room_names(rooms)
 
     # -- slash commands -----------------------------------------------------
 
     def _slash(self, line: str) -> None:
-        parts = line.split()
+        parts = line.split(maxsplit=1)
         cmd = parts[0]
-        arg = parts[1] if len(parts) > 1 else None
+        arg = parts[1].strip() if len(parts) > 1 else None
         with_arg: dict[str, Callable[[str | None], None]] = {
+            "/plan": self._plan,
             "/map": self._map,
             "/show": self._show,
             "/mode": self._mode,
         }
         plain: dict[str, Callable[[], None]] = {
+            "/build": self._build,
             "/diff": self._diff,
             "/write": self._write,
             "/discard": self._discard,
             "/undo": self._undo,
             "/reload": self._reload,
             "/notes": self._notes,
+            "/log": self._log,
         }
         if cmd in with_arg:
             with_arg[cmd](arg)
         else:
             plain.get(cmd, self._help)()
+
+    def _plan(self, arg: str | None) -> None:
+        if self.session.state.mode != "area":
+            self._say("/plan is only available in area mode")
+            return
+        if arg == "off":
+            self.session.state.planning = False
+            self._say("left planning mode")
+            return
+        self.session.state.planning = True
+        if arg is not None:
+            self._turn(arg)
+            return
+        self._say(
+            "planning mode is on; describe or refine the area, "
+            "then /build to generate rooms (or /plan off to leave)"
+        )
+        if self.session.state.plan_brief is not None:
+            self._say(format_brief(self.session.state.plan_brief))
+
+    def _build(self) -> None:
+        if self.session.state.mode != "area":
+            self._say("/build is only available in area mode")
+            return
+        brief = self.session.state.plan_brief
+        if brief is None:
+            self._say("nothing to build; use /plan to plan an area first")
+            return
+        ctx = self._current()
+        if ctx is None or not self._check_loaded(ctx):
+            return
+        brief = normalize_brief(ctx, brief)
+        if not self._brief_usable(ctx, brief):
+            return
+        has_rooms = _has_decls(ctx, "room")
+        before: dict[str, Coord] = {}
+        if has_rooms:
+            before, _ = place_existing(
+                ctx.world.rooms_in(ctx.package), ctx.package, self.session.state.grid
+            )
+        grid = dict(self.session.state.grid)
+        turn, proposal = build_from_plan(ctx, brief, grid)
+        self.session.state.planning = False
+        self.session.state.plan_brief = None
+        self.session.state.brief_draft = []
+        if proposal is not None:
+            coords = grid if has_rooms else dict(proposal.grid or {})
+            self._offer(ctx, proposal, coords, before)
+        elif turn is not None:
+            self._reply(turn, brief.title)
+
+    def _brief_usable(self, ctx: Context, brief: AreaBrief) -> bool:
+        """A saved brief's link is checked before /build: the plan model cannot change it."""
+        problems = brief_problems(ctx, brief)
+        for problem in problems:
+            self._say(problem)
+        if problems:
+            self._say("fix the link with /plan before /build")
+        return not problems
 
     def _discard(self) -> None:
         if self.session.state.pending is None:
@@ -726,10 +939,17 @@ class Repl:
         """The linked package's files, when the proposal has a link and the user agrees."""
         if not pending.link_ops or pending.link_package is None:
             return {}
+        # The input guard stands down while the user answers, or it would swallow the reply.
+        turn = self._active_turn
+        if turn is not None:
+            turn.suspend()
         try:
             answer = self.read_line(f"Also add the return exit in {pending.link_package}? [y/N] ")
         except EOFError:
             answer = ""
+        finally:
+            if turn is not None:
+                turn.resume()
         if answer.strip().lower() not in ("y", "yes"):
             return {}
         return self._link_writes(pending.link_package, pending.link_ops)
@@ -872,6 +1092,11 @@ class Repl:
         if mode not in ("area", "mob", "skill"):
             self._say("usage: /mode area|mob|skill")
             return
+        if mode != "area":
+            self.session.state.planning = False
+        if mode != self.session.state.mode:
+            # A brief half-settled in one mode is no request for another.
+            self.session.state.brief_draft = []
         self.session.state.mode = cast("Mode", mode)
         self._say(f"mode is now {mode}")
         for m, note in self.session.state.notes:
@@ -885,8 +1110,24 @@ class Repl:
         for m, note in self.session.state.notes:
             self._say(f"[{m}] {note}")
 
+    def _log(self) -> None:
+        if not self.log_path.is_file():
+            self._say("no model calls logged yet")
+            return
+        # The pager owns the terminal while it is up; the input guard would eat its keys.
+        turn = self._active_turn
+        if turn is not None:
+            turn.suspend()
+        try:
+            self._view_log(self.log_path)
+        finally:
+            if turn is not None:
+                turn.resume()
+
     def _help(self) -> None:
         self._say(
+            "/plan [text|off]  plan or refine the area before building\n"
+            "/build  generate rooms from the current area plan\n"
             "/map [z]  show the room map\n"
             "/show <id>  show a declaration's source\n"
             "/diff  show the pending change as a diff\n"
@@ -896,6 +1137,7 @@ class Repl:
             "/reload  re-read the world and the package\n"
             "/mode area|mob|skill  switch the mode\n"
             "/notes  show the noted requests\n"
+            "/log  browse this session's model calls\n"
             "/help  this help\n"
             "/quit  leave"
         )

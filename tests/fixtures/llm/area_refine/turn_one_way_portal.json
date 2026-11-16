@@ -1,0 +1,7 @@
+{
+  "kind": "edit",
+  "reply": "Added a chute from the hall to the cellar.",
+  "edits": [
+    {"edit": "add_portal", "portal": {"a": "hall", "a_exit": "chute", "b": "cellar", "one_way": true}}
+  ]
+}

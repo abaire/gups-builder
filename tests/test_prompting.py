@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from gups_builder.prompting import estimate_tokens, fit, load_prompt
+from gups_builder.prompting import estimate_tokens, fit, fit_lines, load_prompt
 
 
 def test_load_prompt_substitutes_fields() -> None:
@@ -54,3 +54,19 @@ def test_fit_with_no_budget_keeps_priority_zero_only() -> None:
     sections = [(2, "z" * 400), (0, "keep" * 10)]
     out = fit(sections, 10)
     assert out == "keep" * 10
+
+
+def test_fit_lines_keeps_the_newest_lines_that_fit_and_says_what_it_left_out() -> None:
+    lines = [f"user: message {i:02} " + "x" * 36 for i in range(10)]  # 14 tokens each
+    assert fit_lines(lines, 1000) == "\n".join(lines)
+    # Three lines fit, but lines go eight at a time so the start holds for several turns.
+    kept = fit_lines(lines, 42).splitlines()
+    assert kept == ["(8 earlier message(s) left out for space)", *lines[8:]]
+    # One more line next turn still leaves out eight: the text starts where it did.
+    longer = fit_lines([*lines, "user: message 10 " + "x" * 36], 42)
+    assert longer.startswith("\n".join(kept))
+
+
+def test_fit_lines_keeps_the_newest_line_even_alone_over_budget() -> None:
+    assert fit_lines(["a" * 400], 1) == "a" * 400
+    assert fit_lines([], 100) == "none"

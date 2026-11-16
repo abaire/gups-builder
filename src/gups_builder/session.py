@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel
 
+from gups_builder.modes.area_checks import AreaBrief  # noqa: TC001
 from gups_builder.star.ops import StarOp  # noqa: TC001
 
 if TYPE_CHECKING:
@@ -57,6 +58,14 @@ class SessionState(BaseModel):
     history: list[tuple[Literal["user", "builder"], str]] = []
     grid: dict[str, tuple[int, int, int]] = {}
     notes: list[tuple[str, str]] = []  # (mode, request) of out-of-scope turns
+    planning: bool = False
+    plan_brief: AreaBrief | None = None
+    # The conversation of a brief still being settled in a mode with nothing built yet: the
+    # request, then each question asked and the user's answer. Each new turn sends it all.
+    brief_draft: list[tuple[Literal["user", "builder"], str]] = []
+    # How many messages of ``history`` planning turns have folded into the brief's decisions;
+    # a planning prompt sends only the messages after them.
+    plan_folded: int = 0
     pending: PendingChange | None = None
     builder_test_hash: str | None = None  # sha256 of builder_test.star as last written
     # Files are keyed by their path in the world ("zones/mansion/rooms.star"), because a write

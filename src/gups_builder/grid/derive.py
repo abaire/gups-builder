@@ -3,18 +3,31 @@
 Each connection yields its two exits with the door on both sides; a portal
 yields its two named exits, deriving the return name from a standard one.
 ``validate`` returns every problem it finds, each a full sentence naming the
-rooms, so the model can repair its plan.
+rooms and saying what to change, so the model can repair its plan.
+``snake_case_exits`` and ``name_clashing_exits`` settle what the builder can fix
+alone: a custom exit name the engine would reject, and two that clash in one room.
 """
 
 from __future__ import annotations
 
+import re
 from collections import Counter, deque
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from gups_builder.grid.model import Connection, Coord, DerivedExit, DoorSpec, Grid, GridRoom, Portal
+from gups_builder.grid.model import (
+    Connection,
+    Coord,
+    DerivedExit,
+    DoorSpec,
+    Grid,
+    GridRoom,
+    Portal,
+    RandomExit,
+)
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Iterable, Mapping
 
 DIRECTION_DELTAS: dict[str, Coord] = {
     "north": (0, 1, 0),
@@ -45,6 +58,9 @@ OPPOSITES = {
 }
 
 
+_USE_AN_ID = "; use a room id of the plan"
+
+
 def direction_between(a: Coord, b: Coord) -> str | None:
     """The direction name when the rooms are adjacent; None otherwise."""
     return _DELTAS.get((b[0] - a[0], b[1] - a[1], b[2] - a[2]))
@@ -58,6 +74,8 @@ def derive_exits(grid: Grid) -> list[DerivedExit]:
         exits.extend(_connection_exits(conn, by_id))
     for portal in grid.portals:
         exits.extend(_portal_exits(portal, by_id))
+    for random_exit in grid.random_exits:
+        exits.extend(_random_exit(random_exit, by_id))
     return exits
 
 
@@ -88,11 +106,26 @@ def _portal_exits(portal: Portal, by_id: Mapping[str, GridRoom]) -> list[Derived
         return []
     if portal.b not in by_id:
         return []
-    exits = [DerivedExit(room=portal.a, direction=portal.a_exit, to=portal.b, door=portal.door)]
+    if portal.one_way:
+        return [DerivedExit(portal.a, portal.a_exit, portal.b, portal.door, one_way=True)]
     direction = _portal_return_direction(portal)
+    one_way = OPPOSITES.get(portal.a_exit) != direction
+    exits = [DerivedExit(portal.a, portal.a_exit, portal.b, portal.door, one_way)]
     if direction is not None:
-        exits.append(DerivedExit(room=portal.b, direction=direction, to=portal.a, door=portal.door))
+        exits.append(DerivedExit(portal.b, direction, portal.a, portal.door, one_way))
     return exits
+
+
+def _random_exit(random_exit: RandomExit, by_id: Mapping[str, GridRoom]) -> list[DerivedExit]:
+    """The exit, toward the candidates the plan has; none when it has none of them."""
+    candidates = tuple(dict.fromkeys(to for to in random_exit.to if to in by_id))
+    if random_exit.room not in by_id or not candidates:
+        return []
+    return [
+        DerivedExit(
+            random_exit.room, random_exit.exit, candidates[0], None, True, candidates=candidates
+        )
+    ]
 
 
 def _portal_return_direction(portal: Portal) -> str | None:
@@ -110,9 +143,9 @@ def _unknown_ends(what: str, a: str, b: str, by_id: Mapping[str, object]) -> lis
     """One sentence per end of a connection or portal that names no room of the plan."""
     problems = []
     if b not in by_id:
-        problems.append(f"the {what} from '{a}' names the unknown room '{b}'")
+        problems.append(f"the {what} from '{a}' names the unknown room '{b}'{_USE_AN_ID}")
     if a not in by_id and a != b:
-        problems.append(f"the {what} to '{b}' names the unknown room '{a}'")
+        problems.append(f"the {what} to '{b}' names the unknown room '{a}'{_USE_AN_ID}")
     return problems
 
 
@@ -122,19 +155,49 @@ def validate(
     """Every problem in the plan, each a full sentence the model can act on."""
     by_id = {room.id: room for room in grid.rooms}
     exits = derive_exits(grid)
-    problems = _shared_coordinates(grid)
+    broken = _broken_links(grid, by_id)
+    problems = list(broken)
     if entry not in by_id:
-        problems.append(f"the entry room '{entry}' is not in the plan")
-    problems.extend(_bad_connections(grid, by_id))
-    for portal in grid.portals:
-        problems.extend(_unknown_ends("portal", portal.a, portal.b, by_id))
+        problems.append(f"the entry room '{entry}' is not in the plan{_USE_AN_ID}")
     problems.extend(_duplicate_exit_names(exits))
-    problems.extend(_unreachable_rooms(grid, exits, entry, by_id))
+    problems.extend(_invalid_exit_names(exits))
+    # A broken link drops its exits, and every room past it would be reported as cut off
+    # too: dozens of lines that all go away with the one fix the model is already asked for.
+    if not broken:
+        problems.extend(_unjoined_rooms(grid, exits, entry, by_id))
     problems.extend(_room_count(grid, room_range))
     problems.extend(_door_problems(exits, known_items))
     problems.extend(_unmapped_rooms(grid))
     problems.extend(_portals_without_return(grid))
+    problems.extend(_one_way_returns(grid))
+    for random_exit in grid.random_exits:
+        problems.extend(_random_exit_problems(random_exit, by_id))
     return problems
+
+
+def _broken_links(grid: Grid, by_id: Mapping[str, GridRoom]) -> list[str]:
+    """Rooms on one cell, and connections or portals that cannot yield their exits."""
+    problems = _shared_coordinates(grid)
+    problems.extend(_bad_connections(grid, by_id))
+    for portal in grid.portals:
+        problems.extend(_unknown_ends("portal", portal.a, portal.b, by_id))
+    return problems
+
+
+def _unjoined_rooms(
+    grid: Grid, exits: list[DerivedExit], entry: str, by_id: Mapping[str, GridRoom]
+) -> list[str]:
+    """Rooms the entry cannot reach, then reached rooms with no way out.
+
+    A room joined to nothing is reported once, as unreachable, since one passage to it
+    settles both.
+    """
+    cut_off = _unreachable_rooms(grid, exits, entry, by_id)
+    unreachable = [
+        f"'{rid}' is not reachable from '{entry}'; add a connection or portal that leads to it"
+        for rid in cut_off
+    ]
+    return unreachable + _rooms_without_exits(grid, exits, set(cut_off))
 
 
 def _shared_coordinates(grid: Grid) -> list[str]:
@@ -148,7 +211,7 @@ def _shared_coordinates(grid: Grid) -> list[str]:
         if room.coord in seen:
             problems.append(
                 f"'{seen[room.coord]}' and '{room.id}' share the coordinate "
-                + _coord_text(room.coord)
+                f"{_coord_text(room.coord)}; move one of them to a free coordinate"
             )
             continue
         seen[room.coord] = room.id
@@ -178,12 +241,37 @@ def _bad_connections(grid: Grid, by_id: Mapping[str, GridRoom]) -> list[str]:
     return problems
 
 
+def _target_text(e: DerivedExit) -> str:
+    if e.candidates:
+        return "a random one of " + ", ".join(f"'{to}'" for to in e.candidates)
+    return f"'{e.to}'"
+
+
 def _duplicate_exit_names(exits: list[DerivedExit]) -> list[str]:
-    usage: Counter[tuple[str, str]] = Counter((e.room, e.direction) for e in exits)
+    targets: dict[tuple[str, str], list[str]] = {}
+    for e in exits:
+        targets.setdefault((e.room, e.direction), []).append(_target_text(e))
     return [
-        f"'{room_id}' uses the exit name '{exit_name}' twice"
-        for (room_id, exit_name), count in usage.items()
-        if count > 1
+        f"'{room_id}' uses the exit name '{exit_name}' for both "
+        + " and ".join(tos)
+        + "; give one of them another direction or exit name"
+        for (room_id, exit_name), tos in targets.items()
+        if len(tos) > 1
+    ]
+
+
+# The engine's own rule for an exit's direction or custom name.
+EXIT_NAME = re.compile(r"[a-z][a-z0-9_]*")
+
+
+def _invalid_exit_names(exits: list[DerivedExit]) -> list[str]:
+    bad = dict.fromkeys(
+        (e.room, e.direction) for e in exits if not EXIT_NAME.fullmatch(e.direction)
+    )
+    return [
+        f"'{room_id}' has the exit name '{name}', which is not a valid exit name; "
+        "use snake_case starting with a letter ([a-z][a-z0-9_]*)"
+        for room_id, name in bad
     ]
 
 
@@ -192,16 +280,13 @@ def _unreachable_rooms(
 ) -> list[str]:
     if entry not in by_id:
         return []
+    # Exits are followed in their own direction, so a room that only a one-way exit
+    # leaves is not reached through it.
     neighbours: dict[str, list[str]] = {}
     for e in exits:
-        neighbours.setdefault(e.room, []).append(e.to)
-        neighbours.setdefault(e.to, []).append(e.room)
+        neighbours.setdefault(e.room, []).extend(e.destinations)
     reached = _walk_from(entry, neighbours, by_id)
-    return [
-        f"'{room.id}' is not reachable from '{entry}'"
-        for room in grid.rooms
-        if _unreached(reached, room)
-    ]
+    return [room.id for room in grid.rooms if _unreached(reached, room)]
 
 
 def _walk_from(
@@ -241,7 +326,8 @@ def _room_count(grid: Grid, room_range: tuple[int, int] | None) -> list[str]:
     lo, hi = room_range
     if _in_range(count, lo, hi):
         return []
-    return [f"the plan has {count} rooms; the request calls for {lo} to {hi}"]
+    change = f"add {lo - count}" if count < lo else f"remove {count - hi}"
+    return [f"the plan has {count} rooms; the request calls for {lo} to {hi}, so {change}"]
 
 
 def _in_range(count: int, lo: int, hi: int) -> bool:
@@ -261,12 +347,15 @@ def _door_problems(exits: list[DerivedExit], known_items: set[str]) -> list[str]
             continue
         reported.add(pair)
         if _locked_without_key(e.door):
-            problems.append(f"the locked door between '{e.room}' and '{e.to}' has no key")
+            problems.append(
+                f"the locked door between '{e.room}' and '{e.to}' has no key; "
+                "name its key and plan the key"
+            )
             continue
         if _key_not_in_plan(e.door, known_items):
             problems.append(
                 f"the door between '{e.room}' and '{e.to}' has the key '{e.door.key}', "
-                "which is not an item of the plan"
+                "which is not an item of the plan; plan the key or name a planned one"
             )
     return problems
 
@@ -307,13 +396,133 @@ def _joined_by_connection(room_id: str, grid: Grid) -> bool:
 def _portals_without_return(grid: Grid) -> list[str]:
     return [
         f"the portal from '{portal.a}' has the non-standard exit '{portal.a_exit}' "
-        "and no return exit"
+        "and no return exit; set b_exit, or make the portal one_way"
         for portal in grid.portals
         if _missing_return(portal)
     ]
 
 
 def _missing_return(portal: Portal) -> bool:
-    if portal.b_exit is not None:
+    if portal.one_way or portal.b_exit is not None:
         return False
     return portal.a_exit not in OPPOSITES
+
+
+def _one_way_returns(grid: Grid) -> list[str]:
+    return [
+        f"the one-way portal from '{portal.a}' to '{portal.b}' has the return exit "
+        f"'{portal.b_exit}'; drop b_exit, or make the portal two-way"
+        for portal in grid.portals
+        if portal.one_way and portal.b_exit is not None
+    ]
+
+
+# The engine fails a room with no exits at all; one-way exits make that possible.
+def _rooms_without_exits(grid: Grid, exits: list[DerivedExit], skip: set[str]) -> list[str]:
+    exiting = {e.room for e in exits} | skip
+    return [
+        f"'{room.id}' has no exits; add a way out of it"
+        for room in grid.rooms
+        if not room.external and room.id not in exiting
+    ]
+
+
+def _random_exit_problems(random_exit: RandomExit, by_id: Mapping[str, GridRoom]) -> list[str]:
+    what = f"the random exit '{random_exit.exit}' from '{random_exit.room}'"
+    problems = []
+    if len(set(random_exit.to)) < 2:
+        problems.append(
+            f"{what} has fewer than two distinct rooms to pick from; list at least two, "
+            "or use a portal"
+        )
+    if random_exit.exit in OPPOSITES:
+        # A standard direction promises the room next door, which a pick is not.
+        problems.append(
+            f"{what} uses a standard direction; give it a name of its own, like trick_door"
+        )
+    problems.extend(
+        f"{what} names the unknown room '{name}'{_USE_AN_ID}"
+        for name in dict.fromkeys([random_exit.room, *random_exit.to])
+        if name not in by_id
+    )
+    return problems
+
+
+# -- clashing exit names -----------------------------------------------------------
+
+
+ExitKey = tuple[str, str]
+
+
+def name_clashing_exits(grid: Grid, held: Iterable[ExitKey] = ()) -> Grid:
+    """The grid with each clashing custom portal exit named after the room it leads to.
+
+    Two portals named 'trick door' in one room are one mistake the builder can fix on
+    its own, and a small model asked to fix it tends to send the same plan back. Only
+    custom names change: a standard direction also fixes the return exit, so a clash
+    there is left for validation to report. ``held`` names exits outside the grid, such
+    as a link's, that keep their name, so a portal clashing with one gives way.
+    """
+    usage: Counter[ExitKey] = Counter((e.room, e.direction) for e in derive_exits(grid))
+    usage.update(held)
+    names = _ExitNames(usage, {key for key in usage if usage[key] == 1})
+    portals = [_renamed_portal(portal, names) for portal in grid.portals]
+    if portals == grid.portals:
+        return grid
+    return grid.model_copy(update={"portals": portals})
+
+
+def _renamed_portal(portal: Portal, names: _ExitNames) -> Portal:
+    a_exit = names.distinct(portal.a, portal.a_exit, portal.b)
+    b_exit = portal.b_exit
+    if b_exit is not None:
+        b_exit = names.distinct(portal.b, b_exit, portal.a)
+    if (a_exit, b_exit) == (portal.a_exit, portal.b_exit):
+        return portal
+    return portal.model_copy(update={"a_exit": a_exit, "b_exit": b_exit})
+
+
+@dataclass
+class _ExitNames:
+    """How often each exit name is used in its room, and the names already settled."""
+
+    usage: Counter[ExitKey]
+    taken: set[ExitKey]
+
+    def distinct(self, room: str, name: str, to: str) -> str:
+        """``name`` when it is unique in ``room``; otherwise one that says where it leads."""
+        if name in OPPOSITES or self.usage[(room, name)] < 2:
+            return name
+        base = f"{name}_to_{to}"
+        candidate, number = base, 2
+        while (room, candidate) in self.taken:
+            candidate, number = f"{base}_{number}", number + 1
+        self.taken.add((room, candidate))
+        return candidate
+
+
+def snake_case(name: str) -> str:
+    """``name`` as an exit name the engine accepts, when it has letters or digits to keep.
+
+    Models write exit names as players would say them ('One-way Trick Door'); the
+    engine wants 'one_way_trick_door'. A name that starts with a digit stays invalid,
+    for validation to report, since no spelling of it is obviously right.
+    """
+    return re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_") or name
+
+
+def snake_case_exits(grid: Grid) -> Grid:
+    """The grid with every portal and random exit name in the engine's snake_case."""
+    portals = [_snake_case_portal(portal) for portal in grid.portals]
+    random_exits = [r.model_copy(update={"exit": snake_case(r.exit)}) for r in grid.random_exits]
+    if (portals, random_exits) == (grid.portals, grid.random_exits):
+        return grid
+    return grid.model_copy(update={"portals": portals, "random_exits": random_exits})
+
+
+def _snake_case_portal(portal: Portal) -> Portal:
+    b_exit = None if portal.b_exit is None else snake_case(portal.b_exit)
+    a_exit = snake_case(portal.a_exit)
+    if (a_exit, b_exit) == (portal.a_exit, portal.b_exit):
+        return portal
+    return portal.model_copy(update={"a_exit": a_exit, "b_exit": b_exit})

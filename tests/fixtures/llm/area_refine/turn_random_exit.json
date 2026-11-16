@@ -1,0 +1,7 @@
+{
+  "kind": "edit",
+  "reply": "Added a trick door to the hall.",
+  "edits": [
+    {"edit": "add_random_exit", "random_exit": {"room": "hall", "exit": "Trick Door", "to": ["study", "library", "nursery"]}}
+  ]
+}

@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 
 from pydantic import BaseModel
 
-from gups_builder.grid.derive import DIRECTION_DELTAS, OPPOSITES, derive_exits
+from gups_builder.grid.derive import DIRECTION_DELTAS, OPPOSITES, derive_exits, snake_case
 from gups_builder.grid.place import place_existing, room_id
 from gups_builder.llm.client import Message
 from gups_builder.llm.structured import call_structured
@@ -26,12 +26,15 @@ from gups_builder.modes import testgen
 from gups_builder.modes.area_checks import (
     AddKey,
     AddPortal,
+    AddRandomExit,
     AddRoom,
     AddSpawn,
     AddTodoEdit,
     AreaBrief,
     AreaEdit,
+    AreaGraph,
     AreaPlan,
+    AreaPlanTurn,
     AreaTurn,
     Connect,
     Disconnect,
@@ -42,14 +45,22 @@ from gups_builder.modes.area_checks import (
     RemoveRoom,
     RemoveSpawn,
     Rewrite,
+    RoomConcepts,
     RoomProse,
     SetDoor,
     SetRoom,
     apply_edit_to_grid,
+    at_most_max_concepts,
+    brief_problems,
+    concept_count_problems,
+    concepts_fit,
     full_label,
     grid_from_coords,
     item_prose_check,
     local_id,
+    normalize_brief,
+    normalize_plan,
+    place_graph,
     plan_problems,
     plan_to_grid,
     prose_check,
@@ -58,9 +69,13 @@ from gups_builder.modes.area_checks import (
 from gups_builder.modes.common import (
     Context,
     Proposal,
+    TurnPrompt,
     allowed_values,
+    brief_request,
     finalize,
+    one_question,
     param_allowed,
+    turn_sections,
 )
 from gups_builder.prompting import fit, load_prompt
 from gups_builder.star.ops import (
@@ -79,22 +94,36 @@ from gups_builder.star.values import Value, is_editable
 from gups_builder.star.writer import apply_ops
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
 
     from gups_builder.engine.world import DoorInfo, ExitInfo, RoomInfo
     from gups_builder.grid.model import Coord, DerivedExit, DoorSpec, Grid
 
 # The mode's entry points, and the plan and turn shapes its callers name.
-__all__ = ["AreaBrief", "AreaPlan", "AreaTurn", "area_turn", "create_area", "plan_to_grid"]
+__all__ = [
+    "AreaBrief",
+    "AreaGraph",
+    "AreaPlan",
+    "AreaPlanTurn",
+    "AreaTurn",
+    "area_turn",
+    "build_from_brief",
+    "build_from_plan",
+    "create_area",
+    "format_brief",
+    "plan_to_grid",
+]
 
 SIZE_WORDS = {"tiny": (2, 4), "small": (4, 8), "medium": (8, 15), "large": (15, 30)}
 
-COORDINATE_RULES = (
-    "Rooms sit on an integer grid (x, y, z): +y is north, +x is east, +z is up. "
-    "The eight horizontal neighbours, and straight up and down, are adjacent. "
-    "Connect adjacent rooms with a Connection; use a Portal for anything else. "
-    "No two rooms share a coordinate, and every room must be reachable from the entry room. "
-    "A locked door names its key."
+LAYOUT_RULES = (
+    "Give no coordinates: the builder lays the rooms out from the passages. "
+    "A Passage joins rooms a and b, and its direction is the way from a to b: north, south, "
+    "east, west, northeast, northwest, southeast, southwest, up or down. "
+    "A room has at most one passage, portal or exit in each direction. "
+    "Use a Portal for an exit with a name of its own, like hidden_passage, never for a "
+    "compass direction. Every room must be reachable from the entry room. "
+    "A locked door names its key. Exit names are snake_case."
 )
 
 
@@ -103,23 +132,30 @@ class _CreateState:
     """The brief, and what a build already produced, so a repair re-requests only what changed."""
 
     brief: AreaBrief
-    plan: AreaPlan | None = None
+    graph: AreaGraph | None = None
     prose: dict[str, RoomProse] = field(default_factory=dict)
     fingerprints: dict[str, str] = field(default_factory=dict)
     key_prose: dict[str, ItemProse] = field(default_factory=dict)
     key_concepts: dict[str, str] = field(default_factory=dict)
 
 
-def create_area(ctx: Context, request: str) -> AreaBrief | Proposal:
-    """A new area: the brief, then the plan, prose and ops inside the repair loop."""
+def create_area(
+    ctx: Context, request: str, earlier: Sequence[tuple[str, str]] = ()
+) -> AreaBrief | Proposal:
+    """A new area: the brief, then the plan, prose and ops inside the repair loop.
+
+    ``earlier`` is the brief's conversation so far: the request and each question
+    the builder asked, with the user's answer.
+    """
     logic_budget = ctx.config.logic.context_tokens - ctx.config.logic.max_tokens
     brief_prompt = load_prompt(
         "area_brief", size_words=_size_words_text(), existing_rooms=_existing_rooms(ctx)
     )
+    # The conversation goes last: it grows each turn, and the text before it stays cached.
     sections = [
-        (0, request),
         (0, brief_prompt),
         (2, "Rooms in other packages that could be linked:\n" + _candidate_links(ctx)),
+        (0, brief_request(request, earlier)),
     ]
     brief = call_structured(
         ctx.llm,
@@ -130,11 +166,78 @@ def create_area(ctx: Context, request: str) -> AreaBrief | Proposal:
         ],
         AreaBrief,
         ctx.config.max_repairs,
+        extra_check=lambda b: brief_problems(ctx, b),
+        status=ctx.status,
+        step="drafting area brief",
+        normalize=lambda b: normalize_brief(ctx, b),
     )
+    brief = one_question(brief)
     if brief.questions:
         return brief
-    state = _CreateState(brief)
+    return build_from_brief(ctx, brief)
+
+
+def build_from_brief(ctx: Context, brief: AreaBrief) -> Proposal:
+    """Build a new area proposal from a settled brief."""
+    state = _CreateState(_with_enough_concepts(ctx, brief))
     return finalize(ctx, lambda problems: _build(ctx, state, problems), _builder_test(ctx))
+
+
+def _with_enough_concepts(ctx: Context, brief: AreaBrief) -> AreaBrief:
+    """The brief with one room concept per room, asked for on its own when it falls short.
+
+    Given fewer concepts than rooms, the plan model pads the area with rooms nobody
+    agreed to; the planning model, asked to list more, sends its draft back. A call
+    that only lists rooms has no draft to repeat. It runs once, before the plan, so a
+    lint repair keeps the list.
+    """
+    if concepts_fit(brief):
+        return brief
+    prompt = load_prompt(
+        "area_concepts",
+        brief=brief.model_dump_json(indent=2, exclude={"questions", "room_concepts"}),
+        concepts="\n".join(f"- {c}" for c in brief.room_concepts) or "none",
+        lo=str(brief.room_count.min),
+        hi=str(brief.room_count.max),
+    )
+    concepts = call_structured(
+        ctx.llm,
+        "logic",
+        [Message("system", load_prompt("system_logic")), Message("user", prompt)],
+        RoomConcepts,
+        ctx.config.max_repairs,
+        extra_check=lambda c: concept_count_problems(brief, c),
+        status=ctx.status,
+        step="listing room concepts",
+        normalize=lambda c: at_most_max_concepts(brief, c),
+    )
+    return brief.model_copy(update={"room_concepts": concepts.room_concepts})
+
+
+def format_brief(brief: AreaBrief) -> str:
+    """A readable plain-text summary of the current draft brief."""
+    lines = [
+        f"Plan: {brief.title}",
+        f"Theme: {brief.theme}",
+        f"Style: {brief.style_notes}",
+        f"Size: {brief.room_count.min}-{brief.room_count.max} rooms",
+    ]
+    if brief.link_to is not None:
+        lines.append(f"Link: {brief.link_to}")
+    concepts = "\n".join(f"  - {c}" for c in brief.room_concepts) or "  (none yet)"
+    lines.append("Rooms:\n" + concepts)
+    if brief.decisions:
+        lines.append("Decisions:\n" + "\n".join(f"  - {d}" for d in brief.decisions))
+    return "\n".join(lines)
+
+
+def _planning_rooms(ctx: Context, grid_coords: dict[str, Coord] | None) -> str:
+    if not ctx.world.rooms_in(ctx.package):
+        return _existing_rooms(ctx)
+    coords, off_map = place_existing(
+        ctx.world.rooms_in(ctx.package), ctx.package, grid_coords or {}
+    )
+    return _rooms_text(ctx, coords, off_map)
 
 
 def _counted(n: int, noun: str) -> str:
@@ -191,23 +294,32 @@ def _plan_sections(ctx: Context, state: _CreateState, problems: list[str]) -> li
     """The plan prompt's sections, with the repair request when lint found problems."""
     graph_prompt = load_prompt(
         "area_graph",
-        brief=state.brief.model_dump_json(indent=2),
-        coordinate_rules=COORDINATE_RULES,
+        # An open question is left to defaults at build time; decisions get their own list.
+        brief=state.brief.model_dump_json(indent=2, exclude={"questions", "decisions"}),
+        decisions="\n".join(f"- {d}" for d in state.brief.decisions) or "none",
+        layout_rules=LAYOUT_RULES,
         sizes=_size_options(ctx),
         existing_ids=_existing_ids(ctx),
     )
     sections = [(0, graph_prompt)]
-    if problems and state.plan is not None:
+    if problems and state.graph is not None:
         # The repair keeps the brief and rules in front of the model, not only the errors.
         repair = load_prompt(
-            "repair_lint", problems="\n".join(problems), previous=state.plan.model_dump_json()
+            "repair_lint", problems="\n".join(problems), previous=state.graph.model_dump_json()
         )
         sections.append((0, repair))
     return sections
 
 
-def _plan_call(ctx: Context, brief: AreaBrief, sections: list[tuple[int, str]]) -> AreaPlan:
+def _placed(brief: AreaBrief, graph: AreaGraph) -> AreaPlan:
+    return normalize_plan(brief, place_graph(graph))
+
+
+def _plan_call(
+    ctx: Context, brief: AreaBrief, sections: list[tuple[int, str]], problems: list[str]
+) -> AreaGraph:
     logic_budget = ctx.config.logic.context_tokens - ctx.config.logic.max_tokens
+    step = "repairing room graph" if problems else "planning room graph"
     return call_structured(
         ctx.llm,
         "logic",
@@ -215,14 +327,16 @@ def _plan_call(ctx: Context, brief: AreaBrief, sections: list[tuple[int, str]]) 
             Message("system", load_prompt("system_logic")),
             Message("user", fit(sections, logic_budget)),
         ],
-        AreaPlan,
+        AreaGraph,
         ctx.config.max_repairs,
-        extra_check=lambda p: plan_problems(ctx, brief, p),
+        extra_check=lambda g: plan_problems(ctx, brief, _placed(brief, g)),
+        status=ctx.status,
+        step=step,
     )
 
 
 def _planned_room_prose(
-    ctx: Context, state: _CreateState, room: PlannedRoom, neighbours: str
+    ctx: Context, state: _CreateState, room: PlannedRoom, neighbours: str, step: str | None = None
 ) -> None:
     """The room's prose into ``state``, requested again only when what it depends on changed."""
     fingerprint = _fingerprint(room, neighbours)
@@ -236,16 +350,18 @@ def _planned_room_prose(
         size=room.size,
         neighbours=neighbours,
     )
-    state.prose[room.id] = _prose_call(ctx, prompt, RoomProse, prose_check(room.id))
+    state.prose[room.id] = _prose_call(ctx, prompt, RoomProse, prose_check(room.id), step=step)
     state.fingerprints[room.id] = fingerprint
 
 
-def _planned_key_prose(ctx: Context, state: _CreateState, key: PlannedKey) -> ItemProse:
+def _planned_key_prose(
+    ctx: Context, state: _CreateState, key: PlannedKey, step: str | None = None
+) -> ItemProse:
     """The key's prose, requested again only when its concept changed."""
     if key.id in state.key_prose and state.key_concepts.get(key.id) == key.concept:
         return state.key_prose[key.id]
     prompt = load_prompt("item_prose", theme=state.brief.theme, concept=key.concept)
-    key_prose = _prose_call(ctx, prompt, ItemProse, item_prose_check(key.id))
+    key_prose = _prose_call(ctx, prompt, ItemProse, item_prose_check(key.id), step=step)
     state.key_prose[key.id] = key_prose
     state.key_concepts[key.id] = key.concept
     return key_prose
@@ -261,7 +377,7 @@ def _room_decls(
     for room in plan.rooms:
         exits = [_exit_value(e, planned) for e in exits_by_room.get(room.id, [])]
         if link is not None and link.room == room.id:
-            exits.append(_link_exit(link.exit, link.external_label))
+            exits.append(_link_exit(link.exit, link.external_label, _one_way_link(link)))
         args = _room_args(room, state.prose[room.id], exits, size_ok=size_ok)
         ops.append(AddDecl(file="rooms.star", kind="room", id=room.id, args=args))
     return ops
@@ -283,7 +399,7 @@ def _link_ops(ctx: Context, link: PlannedLink | None) -> tuple[list[StarOp], str
         return [], None
     link_package, external_id = link.external_label.removeprefix("//").rsplit(":", 1)
     return_exit = link.return_exit or OPPOSITES[link.exit]
-    value = _link_exit(return_exit, f"//{ctx.package}:{link.room}")
+    value = _link_exit(return_exit, f"//{ctx.package}:{link.room}", _one_way_link(link))
     return [AppendItem(kind="room", id=external_id, name="exits", value=value)], link_package
 
 
@@ -307,6 +423,9 @@ def _new_package_files(ctx: Context, brief: AreaBrief) -> dict[str, str]:
 def _create_summary(plan: AreaPlan, exits_by_room: dict[str, list[DerivedExit]]) -> str:
     n_exits = sum(len(v) for v in exits_by_room.values()) + (1 if plan.link is not None else 0)
     summary = f"+{len(plan.rooms)} rooms, +{_counted(len(plan.keys), 'item')}, {n_exits} exits"
+    n_random = sum(1 for v in exits_by_room.values() for e in v if e.candidates)
+    if n_random:
+        summary += f" ({_counted(n_random, 'random exit')})"
     if plan.link is not None:
         summary += f", 1 link to {plan.link.external_label} (needs confirmation)"
     return summary
@@ -326,14 +445,32 @@ def _create_preview(
 
 
 def _build(ctx: Context, state: _CreateState, problems: list[str]) -> Proposal:
-    plan = _plan_call(ctx, state.brief, _plan_sections(ctx, state, problems))
-    state.plan = plan
+    graph = _plan_call(ctx, state.brief, _plan_sections(ctx, state, problems), problems)
+    state.graph = graph
+    plan = _placed(state.brief, graph)
     exits_by_room = _exits_by_room(plan_to_grid(plan))
     concepts = {room.id: room.concept for room in plan.rooms}
-    for room in plan.rooms:
+    for i, room in enumerate(plan.rooms, 1):
         neighbours = _neighbours_text(exits_by_room.get(room.id, []), concepts)
-        _planned_room_prose(ctx, state, room, neighbours)
-    keys = [(key.id, _planned_key_prose(ctx, state, key)) for key in plan.keys]
+        _planned_room_prose(
+            ctx,
+            state,
+            room,
+            neighbours,
+            step=f"writing room prose ({i}/{len(plan.rooms)}: {room.id})",
+        )
+    keys = [
+        (
+            key.id,
+            _planned_key_prose(
+                ctx,
+                state,
+                key,
+                step=f"writing key prose ({i}/{len(plan.keys)}: {key.id})",
+            ),
+        )
+        for i, key in enumerate(plan.keys, 1)
+    ]
 
     ops = _room_decls(ctx, plan, state, exits_by_room)
     ops.extend(_key_decl(key_id, key_prose) for key_id, key_prose in keys)
@@ -355,8 +492,17 @@ def _direction_value(direction: str) -> Value:
     return {"$const": f"DIR.{direction}"} if direction in DIRECTION_DELTAS else direction
 
 
-def _link_exit(direction: str, to: str) -> Value:
-    return {"$call": "exit", "args": [_direction_value(direction)], "kwargs": {"to": to}}
+def _one_way_link(link: PlannedLink) -> bool:
+    """Whether the link's two exits are not opposite directions, so each is one-way."""
+    return_exit = link.return_exit or OPPOSITES.get(link.exit)
+    return OPPOSITES.get(link.exit) != return_exit
+
+
+def _link_exit(direction: str, to: str, one_way: bool) -> Value:
+    kwargs: dict[str, Value] = {"to": to}
+    if one_way:
+        kwargs["one_way"] = True
+    return {"$call": "exit", "args": [_direction_value(direction)], "kwargs": kwargs}
 
 
 def _door_value(door: DoorSpec) -> Value:
@@ -369,9 +515,15 @@ def _door_value(door: DoorSpec) -> Value:
 
 
 def _exit_value(e: DerivedExit, room_ids: set[str]) -> Value:
-    kwargs: dict[str, Value] = {"to": f":{e.to}" if e.to in room_ids else e.to}
+    if e.candidates:
+        # The engine makes an exit with several rooms one-way, and lets it have no door.
+        kwargs: dict[str, Value] = {"to": [f":{to}" for to in e.candidates]}
+        return {"$call": "exit", "args": [_direction_value(e.direction)], "kwargs": kwargs}
+    kwargs = {"to": f":{e.to}" if e.to in room_ids else e.to}
     if e.door is not None:
         kwargs["door"] = _door_value(e.door)
+    if e.one_way:
+        kwargs["one_way"] = True
     return {"$call": "exit", "args": [_direction_value(e.direction)], "kwargs": kwargs}
 
 
@@ -398,7 +550,9 @@ remove_room id — remove a room and the exits that point at it
 connect a, b, door {state, key} — join two adjacent rooms (add or change the door)
 disconnect a, b — remove the passage between two rooms
 set_door a, b, door | none — put a door on, or take one off, an existing passage
-add_portal portal {a, a_exit, b, b_exit, door} — join two non-adjacent rooms
+add_portal portal {a, a_exit, b, b_exit, door, one_way} — join two non-adjacent rooms
+add_random_exit random_exit {room, exit, to} — an exit with a name of its own, from room to one of \
+two or more rooms in `to`, picked at random each time; no door, no way back
 set_room id, size, tags, regions — change a room's size, tags or regions
 rewrite ids, guidance — rewrite the prose of existing rooms
 add_key id, concept — add a key item, with its prose
@@ -463,6 +617,9 @@ def _where(coords: dict[str, Coord], rid: str) -> str:
 
 
 def _exit_text(e: ExitInfo, package: str) -> str:
+    if e.candidates:
+        rooms = " or ".join(local_id(to, package) or to for to in e.candidates)
+        return f"{e.dir}->one of {rooms}"
     target = local_id(e.to, package) or e.to
     if e.door is None:
         return f"{e.dir}->{target}"
@@ -509,12 +666,6 @@ def _mobs_text(ctx: Context) -> str:
     )
 
 
-def _history_text(history: list[Message]) -> str:
-    if not history:
-        return "none"
-    return "\n".join(f"{m.role}: {m.content}" for m in history[-6:])
-
-
 @dataclass
 class _TurnRequest:
     """A follow-up message, with the conversation and grid it is read against."""
@@ -532,14 +683,13 @@ def _turn_call(
 ) -> AreaTurn:
     """The turn for the request; ``repair`` is lint's problems and the turn they were in."""
     budget = ctx.config.logic.context_tokens - ctx.config.logic.max_tokens
-    turn_prompt = load_prompt(
+    head = load_prompt(
         "area_turn",
         catalogue=_CATALOGUE,
         rooms=_rooms_text(ctx, request.coords, request.off_map),
-        history=_history_text(request.history),
-        message=request.message,
     )
-    sections = [(0, turn_prompt), (2, _mobs_text(ctx))]
+    prompt = TurnPrompt(head, request.history, request.message, middle=[(2, _mobs_text(ctx))])
+    sections = turn_sections(prompt, budget)
     if repair is not None:
         problems, previous = repair
         sections.append(
@@ -550,6 +700,7 @@ def _turn_call(
                 ),
             )
         )
+    step = "repairing area edits" if repair is not None else "planning area edits"
     return call_structured(
         ctx.llm,
         "logic",
@@ -560,6 +711,8 @@ def _turn_call(
         AreaTurn,
         ctx.config.max_repairs,
         extra_check=lambda turn: turn_problems(ctx, request.coords, turn),
+        status=ctx.status,
+        step=step,
     )
 
 
@@ -603,7 +756,11 @@ def _current_desc(ctx: Context, rid: str) -> str:
 
 
 def _prose_call[T: BaseModel](
-    ctx: Context, prompt: str, model: type[T], check: Callable[[T], list[str]]
+    ctx: Context,
+    prompt: str,
+    model: type[T],
+    check: Callable[[T], list[str]],
+    step: str | None = None,
 ) -> T:
     budget = ctx.config.prose.context_tokens - ctx.config.prose.max_tokens
     return call_structured(
@@ -616,44 +773,55 @@ def _prose_call[T: BaseModel](
         model,
         ctx.config.max_repairs,
         extra_check=check,
+        status=ctx.status,
+        step=step,
     )
 
 
-def _rewrite_call(ctx: Context, rid: str, guidance: str) -> str:
+def _rewrite_call(ctx: Context, build: _TurnBuild, rid: str, guidance: str) -> str:
     prompt = load_prompt(
         "room_rewrite",
-        theme="the existing area",
+        theme=build.theme,
         room_name=_room_name(ctx, rid),
         old_text=_current_desc(ctx, rid),
         guidance=guidance,
     )
-    return _prose_call(ctx, prompt, RoomProse, prose_check(rid)).desc
+    return _prose_call(
+        ctx, prompt, RoomProse, prose_check(rid), step=f"rewriting room prose ({rid})"
+    ).desc
 
 
-def _new_room_prose(ctx: Context, edit: AddRoom, neighbours: str) -> RoomProse:
+def _new_room_prose(ctx: Context, build: _TurnBuild, edit: AddRoom, neighbours: str) -> RoomProse:
     prompt = load_prompt(
         "room_prose",
-        theme="the existing area",
-        style_notes="match the existing rooms",
+        theme=build.theme,
+        style_notes=build.style_notes,
         concept=edit.concept,
         size=edit.size,
         neighbours=neighbours,
     )
-    return _prose_call(ctx, prompt, RoomProse, prose_check(edit.id))
+    return _prose_call(
+        ctx, prompt, RoomProse, prose_check(edit.id), step=f"writing room prose ({edit.id})"
+    )
 
 
-def _key_prose(ctx: Context, edit: AddKey) -> ItemProse:
-    prompt = load_prompt("item_prose", theme="the existing area", concept=edit.concept)
-    return _prose_call(ctx, prompt, ItemProse, item_prose_check(edit.id))
+def _key_prose(ctx: Context, build: _TurnBuild, edit: AddKey) -> ItemProse:
+    prompt = load_prompt("item_prose", theme=build.theme, concept=edit.concept)
+    return _prose_call(
+        ctx, prompt, ItemProse, item_prose_check(edit.id), step=f"writing key prose ({edit.id})"
+    )
 
 
 def _neighbours_text(exits: list[DerivedExit], names: dict[str, str]) -> str:
-    lines = [
-        f"{e.direction}: {names.get(e.to, e.to)}"
-        + (f" ({e.door.state} door)" if e.door is not None else "")
-        for e in exits
-    ]
-    return "\n".join(lines) or "none"
+    return "\n".join(_neighbour_line(e, names) for e in exits) or "none"
+
+
+def _neighbour_line(e: DerivedExit, names: dict[str, str]) -> str:
+    if e.candidates:
+        rooms = " or ".join(names.get(to, to) for to in e.candidates)
+        return f"{e.direction}: one of {rooms}, picked anew each time someone goes through"
+    door = f" ({e.door.state} door)" if e.door is not None else ""
+    return f"{e.direction}: {names.get(e.to, e.to)}{door}"
 
 
 def _room_args(
@@ -710,6 +878,8 @@ class _TurnBuild:
     size_ok: bool
     new_coords: dict[str, Coord]
     skip: set[str]
+    theme: str = "the existing area"
+    style_notes: str = "match the existing rooms"
     notes: list[str] = field(default_factory=list)
     preview: list[tuple[str, str, str]] = field(default_factory=list)
 
@@ -741,7 +911,12 @@ def _exits_between(
         for e in build.current.get(side, [])
         if local_id(e.to, package) == other
     }
-    desired = {e.direction: e for e in build.exits_after.get(side, []) if e.to == other}
+    # A random exit is written once, by its own edit, so the passage diff never sees it.
+    desired = {
+        e.direction: e
+        for e in build.exits_after.get(side, [])
+        if e.to == other and not e.candidates
+    }
     return actual, desired
 
 
@@ -805,7 +980,7 @@ def _set_room_ops(edit: SetRoom, build: _TurnBuild) -> list[StarOp]:
 
 def _add_room_ops(ctx: Context, build: _TurnBuild, edit: AddRoom) -> list[StarOp]:
     room_exits = build.exits_after.get(edit.id, [])
-    prose = _new_room_prose(ctx, edit, _neighbours_text(room_exits, build.names))
+    prose = _new_room_prose(ctx, build, edit, _neighbours_text(room_exits, build.names))
     exits = [_exit_value(e, build.room_ids) for e in room_exits]
     args = _room_args(edit, prose, exits, size_ok=build.size_ok)
     build.new_coords[edit.id] = (edit.at.x, edit.at.y, edit.at.z)
@@ -816,16 +991,29 @@ def _add_room_ops(ctx: Context, build: _TurnBuild, edit: AddRoom) -> list[StarOp
 def _rewrite_ops(ctx: Context, build: _TurnBuild, edit: Rewrite) -> list[StarOp]:
     ops: list[StarOp] = []
     for rid in edit.ids:
-        new_desc = _rewrite_call(ctx, rid, edit.guidance)
+        new_desc = _rewrite_call(ctx, build, rid, edit.guidance)
         ops.append(SetArg(kind="room", id=rid, name="desc", value=new_desc))
         build.preview.append((rid, "desc", new_desc))
     return ops
 
 
 def _add_key_ops(ctx: Context, build: _TurnBuild, edit: AddKey) -> list[StarOp]:
-    key_prose = _key_prose(ctx, edit)
+    key_prose = _key_prose(ctx, build, edit)
     build.preview.extend(_preview(edit.id, key_prose))
     return [_key_decl(edit.id, key_prose)]
+
+
+def _random_exit_ops(build: _TurnBuild, edit: AddRandomExit) -> list[StarOp]:
+    """The exit on a room that stays; a new room's comes with its declaration."""
+    room = edit.random_exit.room
+    if room in build.skip:
+        return []
+    name = snake_case(edit.random_exit.exit)
+    return [
+        AppendItem(kind="room", id=room, name="exits", value=_exit_value(e, build.room_ids))
+        for e in build.exits_after.get(room, [])
+        if e.candidates and e.direction == name
+    ]
 
 
 def _plain_edit_ops(ctx: Context, edit: AreaEdit) -> list[StarOp]:
@@ -852,10 +1040,14 @@ def _edit_ops(ctx: Context, build: _TurnBuild, edit: AreaEdit) -> list[StarOp]:
         return _rewrite_ops(ctx, build, edit)
     if isinstance(edit, AddKey):
         return _add_key_ops(ctx, build, edit)
+    if isinstance(edit, AddRandomExit):
+        return _random_exit_ops(build, edit)
     return _plain_edit_ops(ctx, edit)
 
 
-def _turn_build(ctx: Context, turn: AreaTurn, coords: dict[str, Coord]) -> _TurnBuild:
+def _turn_build(
+    ctx: Context, turn: AreaTurn, coords: dict[str, Coord], brief: AreaBrief | None = None
+) -> _TurnBuild:
     grid_after = grid_from_coords(ctx, coords)
     for edit in turn.edits:
         apply_edit_to_grid(grid_after, edit)
@@ -874,11 +1066,15 @@ def _turn_build(ctx: Context, turn: AreaTurn, coords: dict[str, Coord]) -> _Turn
         size_ok=param_allowed(ctx.api, ctx.world, "room", "size"),
         new_coords={rid: c for rid, c in coords.items() if rid not in removed},
         skip=set(added) | removed,
+        theme=brief.theme if brief is not None else "the existing area",
+        style_notes=brief.style_notes if brief is not None else "match the existing rooms",
     )
 
 
-def _edit_to_proposal(ctx: Context, turn: AreaTurn, coords: dict[str, Coord]) -> Proposal:
-    build = _turn_build(ctx, turn, coords)
+def _edit_to_proposal(
+    ctx: Context, turn: AreaTurn, coords: dict[str, Coord], brief: AreaBrief | None = None
+) -> Proposal:
+    build = _turn_build(ctx, turn, coords, brief)
     ops = [op for edit in turn.edits for op in _edit_ops(ctx, build, edit)]
     ops.extend(_exit_ops(ctx, turn.edits, build))
     added = sum(isinstance(edit, AddRoom) for edit in turn.edits)
@@ -916,11 +1112,33 @@ def _update_coords(grid_coords: dict[str, Coord], turn: AreaTurn, grid: dict[str
     grid_coords.update(grid)
 
 
+def _has_rooms(ctx: Context) -> bool:
+    return any(d.kind == "room" for d in ctx.view.decls) or any(
+        o.kind == "room" for o in ctx.view.opaque
+    )
+
+
+def build_from_plan(
+    ctx: Context, brief: AreaBrief, grid_coords: dict[str, Coord]
+) -> tuple[AreaTurn | None, Proposal | None]:
+    """Build a proposal from a planned brief, creating a new zone or editing an existing one.
+
+    The build starts from a clean context: the brief and its decisions are everything
+    the planning conversation settled, so none of that conversation is sent along.
+    """
+    if not _has_rooms(ctx):
+        return None, build_from_brief(ctx, brief)
+    request = f"Apply this planned brief to the area:\n{format_brief(brief)}"
+    return area_turn(ctx, grid_coords, request, [], brief=brief)
+
+
 def area_turn(
     ctx: Context,
     grid_coords: dict[str, Coord],
     message: str,
     history: list[Message],
+    *,
+    brief: AreaBrief | None = None,
 ) -> tuple[AreaTurn, Proposal | None]:
     """Turn a follow-up message in area mode into a turn and, for an edit, a proposal.
 
@@ -948,7 +1166,7 @@ def area_turn(
                 notes=[f"The repair answered with a {last.kind} turn: {last.reply}"],
                 grid=dict(coords),
             )
-        return _edit_to_proposal(ctx, last, coords)
+        return _edit_to_proposal(ctx, last, coords, brief)
 
     proposal = finalize(ctx, build, _builder_test(ctx) if _is_zone(ctx) else None)
     if last.kind != "edit":

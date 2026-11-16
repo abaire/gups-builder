@@ -32,7 +32,7 @@ def test_defaults(tmp_path: Path) -> None:
     assert cfg.logic.api_key is None
     assert cfg.logic.temperature == 0.2
     assert cfg.logic.max_tokens == 4096
-    assert cfg.logic.context_tokens == 16384
+    assert cfg.logic.context_tokens == 32768
     assert cfg.logic.structured == "json_schema"
     assert cfg.logic.timeout_s == 300.0
     assert cfg.prose.temperature == 0.8

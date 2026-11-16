@@ -11,7 +11,7 @@ from pydantic import BaseModel
 
 from gups_builder import cli
 from gups_builder.config import Config, RoleConfig
-from gups_builder.llm.client import HttpLlm, LlmError, Message
+from gups_builder.llm.client import ContextUsage, HttpLlm, LlmError, Message
 from gups_builder.llm.fake import FakeLlm
 from gups_builder.llm.log import CallLog
 from gups_builder.llm.structured import StructuredCallError, call_structured
@@ -221,11 +221,116 @@ def test_call_structured_exhausts_repairs_and_raises() -> None:
     assert len(llm.calls) == 2
 
 
+def test_call_structured_error_names_the_step_and_every_attempt() -> None:
+    llm = FakeLlm({"logic": ["bad", "still bad"]})
+    with pytest.raises(StructuredCallError) as exc:
+        call_structured(
+            llm, "logic", [Message("user", "reply")], _Word, max_repairs=1, step="planning"
+        )
+    assert exc.value.step == "planning"
+    assert str(exc.value).startswith(
+        "model failed to produce a valid reply for planning after 2 attempts:"
+    )
+
+
+def _word_ok(reply: _Word) -> list[str]:
+    return [] if reply.word == "ok" else ["word must be ok"]
+
+
+def test_call_structured_starts_afresh_once_when_the_model_repeats_its_reply() -> None:
+    # Whitespace aside, the second reply is the first again: the same history would get it
+    # once more, so the next attempt is one new request holding the reply and the errors.
+    # A repeat of that ends the call.
+    llm = FakeLlm({"logic": ['{"word": "no"}', '{"word":"no"}\n', '{"word": "no"}', "{}"]})
+    messages = [Message("system", "rules"), Message("user", "reply")]
+    with pytest.raises(StructuredCallError) as exc:
+        call_structured(llm, "logic", messages, _Word, max_repairs=3, extra_check=_word_ok)
+    assert len(llm.calls) == 3
+    fresh = llm.calls[2][1]
+    assert [m.role for m in fresh] == ["system", "user"]
+    assert fresh[1].content.startswith("reply\n\n")
+    assert "- word must be ok" in fresh[1].content
+    assert '{"word":"no"}' in fresh[1].content
+    assert exc.value.note == (
+        "attempt 3 sent back attempt 2's reply unchanged, so the remaining repairs were skipped"
+    )
+    assert str(exc.value).endswith(f"({exc.value.note})")
+    assert len(exc.value.errors) == 3
+
+
+def test_call_structured_keeps_repairing_a_reply_that_changed() -> None:
+    llm = FakeLlm({"logic": ['{"word": "no"}', '{"word": "nope"}', '{"word": "ok"}']})
+    result = call_structured(
+        llm, "logic", [Message("user", "reply")], _Word, max_repairs=3, extra_check=_word_ok
+    )
+    assert result.word == "ok"
+    assert len(llm.calls) == 3
+
+
+def test_call_structured_normalizes_before_the_extra_check() -> None:
+    llm = FakeLlm({"logic": ['{"word": "OK"}']})
+    seen: list[str] = []
+
+    def check(reply: _Word) -> list[str]:
+        seen.append(reply.word)
+        return [] if reply.word == "ok" else ["word must be ok"]
+
+    result = call_structured(
+        llm,
+        "logic",
+        [Message("user", "reply")],
+        _Word,
+        max_repairs=0,
+        extra_check=check,
+        normalize=lambda w: _Word(word=w.word.lower()),
+    )
+    assert result.word == "ok"
+    assert seen == ["ok"]
+
+
 def test_call_structured_strips_code_fence() -> None:
     llm = FakeLlm({"logic": ['```json\n{"word": "ok"}\n```']})
     result = call_structured(llm, "logic", [Message("user", "reply")], _Word, max_repairs=3)
     assert result.model_dump() == {"word": "ok"}
     assert len(llm.calls) == 1
+
+
+def test_call_structured_status_names_the_model_and_the_repair_attempt() -> None:
+    llm = FakeLlm({"logic": ["bad", '{"word": "ok"}']}, models={"logic": "qwen2.5:14b"})
+    messages: list[str] = []
+    call_structured(
+        llm,
+        "logic",
+        [Message("user", "reply")],
+        _Word,
+        max_repairs=2,
+        status=messages.append,
+        step="choosing a word",
+    )
+    assert messages == [
+        "Waiting for logic model (qwen2.5:14b) — choosing a word...",
+        "Repairing choosing a word (logic model (qwen2.5:14b), attempt 1/2)...",
+    ]
+
+
+def test_call_structured_status_omits_an_unnamed_model() -> None:
+    llm = FakeLlm({"prose": ['{"word": "ok"}']})
+    messages: list[str] = []
+    call_structured(
+        llm, "prose", [Message("user", "reply")], _Word, max_repairs=0, status=messages.append
+    )
+    assert messages == ["Waiting for prose model — _Word..."]
+
+
+def test_http_llm_model_name_per_role() -> None:
+    config = Config(
+        logic=RoleConfig(model="big", temperature=0.5),
+        prose=RoleConfig(model="small", temperature=0.5),
+    )
+    llm = HttpLlm(config, transport=httpx.MockTransport(lambda _r: httpx.Response(200)))
+    assert llm.model_name("logic") == "big"
+    assert llm.model_name("prose") == "small"
+    assert HttpLlm(Config()).model_name("logic") == ""
 
 
 def test_fake_llm_records_calls_and_fails_when_out_of_replies() -> None:
@@ -506,3 +611,36 @@ def test_list_models_errors_raise_llm_error(response: httpx.Response) -> None:
     llm = HttpLlm(_config(model=""), transport=httpx.MockTransport(lambda _r: response))
     with pytest.raises(LlmError, match="logic"):
         llm.list_models("logic")
+
+
+def test_usage_is_estimated_as_sent_then_counted_from_the_reply() -> None:
+    def reply(_r: httpx.Request, _b: dict[str, Any]) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"role": "assistant", "content": "OK"}}],
+                "usage": {"prompt_tokens": 9000, "completion_tokens": 250, "total_tokens": 9250},
+            },
+        )
+
+    transport, _ = _mock(reply)
+    llm = HttpLlm(_config(model="m1", context_tokens=32768), transport=transport)
+    heard: list[ContextUsage] = []
+    llm.set_usage_listener(heard.append)
+    llm.complete("logic", [Message("user", "x" * 400)], None)
+    assert heard == [
+        ContextUsage("logic", 101, 32768, estimated=True),
+        ContextUsage("logic", 9250, 32768, estimated=False),
+    ]
+    assert heard[0].text() == "logic ctx ~101/32.8k (0%)"
+    assert heard[1].text() == "logic ctx 9.2k/32.8k (28%)"
+
+
+def test_usage_stays_an_estimate_when_the_server_sends_no_count() -> None:
+    transport, _ = _mock(lambda _r, _b: _chat_reply({"content": "x" * 40}))
+    llm = HttpLlm(_config(model="m1"), transport=transport)
+    heard: list[ContextUsage] = []
+    llm.set_usage_listener(heard.append)
+    llm.complete("logic", [Message("user", "x" * 400)], None)
+    assert [u.estimated for u in heard] == [True, True]
+    assert heard[-1].tokens == 101 + 10

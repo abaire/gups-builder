@@ -1,0 +1,11 @@
+{
+  "kind": "edit",
+  "reply": "Added trick doors.",
+  "edits": [
+    {"edit": "add_random_exit", "random_exit": {"room": "hall", "exit": "trick_door", "to": ["study"]}},
+    {"edit": "add_random_exit", "random_exit": {"room": "hall", "exit": "north", "to": ["study", "library"]}},
+    {"edit": "add_random_exit", "random_exit": {"room": "hall", "exit": "slide", "to": ["study", "library"]}},
+    {"edit": "add_random_exit", "random_exit": {"room": "hall", "exit": "Slide", "to": ["study", "library"]}},
+    {"edit": "add_random_exit", "random_exit": {"room": "ghost_room", "exit": "hole", "to": ["study", "library"]}}
+  ]
+}

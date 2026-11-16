@@ -49,3 +49,31 @@ def fit(sections: list[tuple[int, str]], budget: int) -> str:
                 del kept[i]
                 break
     return "\n\n".join(text for _, text in kept)
+
+
+_DROP_STEP = 8  # lines left out at a time, so the kept text starts at the same line for a while
+
+
+def fit_lines(lines: list[str], budget: int, *, empty: str = "none") -> str:
+    """The newest lines whose estimate fits ``budget``, oldest first.
+
+    Lines are left out from the oldest, in steps of eight: a window that slid by one
+    line each turn would change the text's start every turn and miss a server's
+    prefix cache every time. A first line says how many were left out. The newest
+    line is always kept.
+    """
+    if not lines:
+        return empty
+    used = 0
+    fits = 0
+    for line in reversed(lines):
+        cost = estimate_tokens(line)
+        if fits and used + cost > budget:
+            break
+        used += cost
+        fits += 1
+    dropped = len(lines) - fits
+    if dropped:
+        dropped = min(len(lines) - 1, -(-dropped // _DROP_STEP) * _DROP_STEP)
+    head = [f"({dropped} earlier message(s) left out for space)"] if dropped else []
+    return "\n".join(head + lines[dropped:])

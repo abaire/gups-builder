@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol
 import httpx
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from gups_builder.config import Config, RoleConfig
     from gups_builder.llm.log import CallLog
 
@@ -29,10 +31,49 @@ class Message:
     content: str
 
 
+@dataclass(frozen=True)
+class ContextUsage:
+    """How much of a role's context window one call fills.
+
+    ``tokens`` is the prompt, plus the reply once it is in; it is an estimate
+    until the server reports its own count.
+    """
+
+    role: Role
+    tokens: int
+    window: int
+    estimated: bool
+
+    def text(self) -> str:
+        percent = round(100 * self.tokens / self.window) if self.window > 0 else 0
+        approx = "~" if self.estimated else ""
+        return f"{self.role} ctx {approx}{_k(self.tokens)}/{_k(self.window)} ({percent}%)"
+
+
+def _k(n: int) -> str:
+    return f"{n / 1000:.1f}k" if n >= 1000 else str(n)
+
+
+def estimate_message_tokens(messages: list[Message], json_schema: dict[str, Any] | None) -> int:
+    """A cheap estimate of a request's prompt: about four characters a token."""
+    chars = sum(len(m.content) for m in messages)
+    if json_schema is not None:
+        chars += len(json.dumps(json_schema))
+    return chars // 4 + 1
+
+
 class LlmClient(Protocol):
     def complete(
         self, role: Role, messages: list[Message], json_schema: dict[str, Any] | None
     ) -> str: ...
+
+    def set_usage_listener(self, listener: Callable[[ContextUsage], None] | None) -> None:
+        """Hear each call's context usage: an estimate as it is sent, the count once back."""
+        ...
+
+    def model_name(self, role: Role) -> str:
+        """The model serving ``role``, for progress messages; empty when it has no name."""
+        ...
 
 
 def _append_schema(messages: list[Message], schema: dict[str, Any]) -> list[Message]:
@@ -67,11 +108,47 @@ class HttpLlm:
         # Whether the last call fell back from json_schema to json_object, for the
         # `models` check: the fallback is invisible in the reply itself.
         self.last_fallback = False
+        self._usage_listener: Callable[[ContextUsage], None] | None = None
+        # The server's token count for the last reply, when it sent one.
+        self._reported_tokens: int | None = None
+
+    def set_usage_listener(self, listener: Callable[[ContextUsage], None] | None) -> None:
+        self._usage_listener = listener
+
+    def _report_usage(self, role: Role, rc: RoleConfig, tokens: int, *, estimated: bool) -> None:
+        if self._usage_listener is not None:
+            self._usage_listener(ContextUsage(role, tokens, rc.context_tokens, estimated))
+
+    def _report_sent(
+        self,
+        role: Role,
+        rc: RoleConfig,
+        messages: list[Message],
+        json_schema: dict[str, Any] | None,
+    ) -> int:
+        """Report the estimate for a call about to be sent, and return it."""
+        estimate = estimate_message_tokens(messages, json_schema)
+        self._reported_tokens = None
+        self._report_usage(role, rc, estimate, estimated=True)
+        return estimate
+
+    def _report_replied(self, role: Role, rc: RoleConfig, estimate: int, reply: str) -> None:
+        """Report the server's count for the call just back, or the estimate plus the reply."""
+        if self._reported_tokens is not None:
+            self._report_usage(role, rc, self._reported_tokens, estimated=False)
+        else:
+            self._report_usage(role, rc, estimate + len(reply) // 4, estimated=True)
+
+    def model_name(self, role: Role) -> str:
+        return self._role_config(role).model
+
+    def _role_config(self, role: Role) -> RoleConfig:
+        return self._config.logic if role == "logic" else self._config.prose
 
     def complete(
         self, role: Role, messages: list[Message], json_schema: dict[str, Any] | None
     ) -> str:
-        rc = self._config.logic if role == "logic" else self._config.prose
+        rc = self._role_config(role)
         self.last_fallback = False
         if not rc.model:
             msg = f"the {role} model is not configured"
@@ -79,6 +156,7 @@ class HttpLlm:
         headers = _auth_headers(rc)
         if rc.structured != "json_schema" and json_schema is not None:
             messages = _append_schema(messages, json_schema)
+        estimate = self._report_sent(role, rc, messages, json_schema)
         started = time.monotonic()
         try:
             reply, error = self._send(role, rc, messages, json_schema, headers)
@@ -97,6 +175,7 @@ class HttpLlm:
             raise
         if self._log is not None:
             self._log.record(role, rc.model, messages, reply, time.monotonic() - started, error)
+        self._report_replied(role, rc, estimate, reply)
         return reply
 
     def _send(
@@ -154,11 +233,12 @@ class HttpLlm:
         if not isinstance(content, str):
             msg = f"{role} request to {rc.base_url} got a reply with no text content"
             raise LlmError(msg)
+        self._reported_tokens = _total_tokens(response)
         return content, None
 
     def list_models(self, role: Role) -> list[str]:
         """Query the OpenAI-compatible ``/models`` endpoint and return sorted model ids."""
-        rc = self._config.logic if role == "logic" else self._config.prose
+        rc = self._role_config(role)
         url = f"{rc.base_url.rstrip('/')}/models"
         try:
             response = self._http.get(
@@ -186,6 +266,19 @@ class HttpLlm:
             if isinstance(entry, dict) and isinstance(entry.get("id"), str)
         ]
         return sorted(ids)
+
+
+def _total_tokens(response: httpx.Response) -> int | None:
+    """The server's prompt plus reply token count, when its reply carries ``usage``."""
+    usage = response.json().get("usage")
+    if not isinstance(usage, dict):
+        return None
+    total = usage.get("total_tokens")
+    if isinstance(total, int):
+        return total
+    parts = [usage.get("prompt_tokens"), usage.get("completion_tokens")]
+    ints = [n for n in parts if isinstance(n, int)]
+    return sum(ints) if ints else None
 
 
 def _auth_headers(rc: RoleConfig) -> dict[str, str]:

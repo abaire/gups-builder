@@ -24,7 +24,16 @@ from gups_builder.llm.client import Message
 from gups_builder.llm.structured import call_structured
 from gups_builder.modes import testgen
 from gups_builder.modes.area_checks import ItemProse
-from gups_builder.modes.common import Context, Proposal, finalize, param_allowed
+from gups_builder.modes.common import (
+    Context,
+    Proposal,
+    TurnPrompt,
+    brief_request,
+    finalize,
+    one_question,
+    param_allowed,
+    turn_sections,
+)
 from gups_builder.modes.mob_checks import (
     AddLoot,
     AddMob,
@@ -67,7 +76,7 @@ from gups_builder.star.values import Value, is_editable
 from gups_builder.star.writer import apply_ops
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable
+    from collections.abc import Callable, Iterable, Sequence
 
     from gups_builder.engine.api import ApiModel
     from gups_builder.engine.world import MobInfo
@@ -90,16 +99,22 @@ class _CreateState:
     item_prose: dict[str, ItemProse] = field(default_factory=dict)
 
 
-def create_mobs(ctx: Context, request: str) -> MobBrief | Proposal:
-    """A new mob: the brief, then the plan, prose and ops inside the repair loop."""
+def create_mobs(
+    ctx: Context, request: str, earlier: Sequence[tuple[str, str]] = ()
+) -> MobBrief | Proposal:
+    """A new mob: the brief, then the plan, prose and ops inside the repair loop.
+
+    ``earlier`` is the brief's conversation so far, as for ``create_area``.
+    """
     logic_budget = ctx.config.logic.context_tokens - ctx.config.logic.max_tokens
     brief_prompt = load_prompt(
         "mob_brief", rooms=_rooms_text(ctx), existing_mobs=_existing_mobs_text(ctx)
     )
+    # The conversation goes last: it grows each turn, and the text before it stays cached.
     sections = [
-        (0, request),
         (0, brief_prompt),
         (2, _balance_text(ctx)),
+        (0, brief_request(request, earlier)),
     ]
     brief = call_structured(
         ctx.llm,
@@ -110,7 +125,10 @@ def create_mobs(ctx: Context, request: str) -> MobBrief | Proposal:
         ],
         MobBrief,
         ctx.config.max_repairs,
+        status=ctx.status,
+        step="drafting mob brief",
     )
+    brief = one_question(brief)
     if brief.questions:
         return brief
     state = _CreateState(brief)
@@ -252,7 +270,7 @@ def _fingerprint(mob: PlannedMob) -> str:
     )
 
 
-def _mob_prose_call(ctx: Context, mob: PlannedMob, notes: str) -> MobProse:
+def _mob_prose_call(ctx: Context, mob: PlannedMob, notes: str, step: str | None = None) -> MobProse:
     prompt = load_prompt(
         "mob_prose",
         notes=notes,
@@ -273,6 +291,8 @@ def _mob_prose_call(ctx: Context, mob: PlannedMob, notes: str) -> MobProse:
         MobProse,
         ctx.config.max_repairs,
         extra_check=prose_check(mob.id),
+        status=ctx.status,
+        step=step,
     )
 
 
@@ -289,6 +309,8 @@ def _item_prose_call(ctx: Context, item_id: str, theme: str, concept: str) -> It
         ItemProse,
         ctx.config.max_repairs,
         extra_check=prose_check(item_id),
+        status=ctx.status,
+        step=f"writing item prose ({item_id})",
     )
 
 
@@ -355,9 +377,12 @@ def _plan_sections(ctx: Context, state: _CreateState, problems: list[str]) -> li
     return sections
 
 
-def _plan_call(ctx: Context, sections: list[tuple[int, str]]) -> MobPlan:
+def _plan_call(
+    ctx: Context, sections: list[tuple[int, str]], problems: list[str] | None = None
+) -> MobPlan:
     logic_budget = ctx.config.logic.context_tokens - ctx.config.logic.max_tokens
     taken = declared_ids(ctx)
+    step = "repairing mobs" if problems else "planning mobs"
     return call_structured(
         ctx.llm,
         "logic",
@@ -368,15 +393,19 @@ def _plan_call(ctx: Context, sections: list[tuple[int, str]]) -> MobPlan:
         MobPlan,
         ctx.config.max_repairs,
         extra_check=lambda p: plan_problems(ctx, p, taken),
+        status=ctx.status,
+        step=step,
     )
 
 
-def _planned_mob_prose(ctx: Context, state: _CreateState, mob: PlannedMob) -> MobProse:
+def _planned_mob_prose(
+    ctx: Context, state: _CreateState, mob: PlannedMob, step: str | None = None
+) -> MobProse:
     """The mob's prose, requested again only when what it depends on changed."""
     fingerprint = _fingerprint(mob)
     current = mob.id in state.prose and state.fingerprints.get(mob.id) == fingerprint
     if not current:
-        state.prose[mob.id] = _mob_prose_call(ctx, mob, state.brief.notes)
+        state.prose[mob.id] = _mob_prose_call(ctx, mob, state.brief.notes, step=step)
         state.fingerprints[mob.id] = fingerprint
     return state.prose[mob.id]
 
@@ -402,12 +431,14 @@ def _create_summary(plan: MobPlan, n_items: int) -> str:
 
 
 def _build(ctx: Context, state: _CreateState, problems: list[str]) -> Proposal:
-    plan = _plan_call(ctx, _plan_sections(ctx, state, problems))
+    plan = _plan_call(ctx, _plan_sections(ctx, state, problems), problems=problems)
     state.plan = plan
     ops: list[StarOp] = []
     prose_preview: list[tuple[str, str, str]] = []
-    for mob in plan.mobs:
-        mob_prose = _planned_mob_prose(ctx, state, mob)
+    for i, mob in enumerate(plan.mobs, 1):
+        mob_prose = _planned_mob_prose(
+            ctx, state, mob, step=f"writing mob prose ({i}/{len(plan.mobs)}: {mob.id})"
+        )
         ops.append(_mob_decl(ctx, mob, mob_prose))
         prose_preview.extend(_preview(mob.id, mob_prose))
     created = new_items(ctx, plan.mobs)
@@ -588,12 +619,6 @@ def _mobs_text(ctx: Context) -> str:
     return "\n".join(lines) if lines else "none"
 
 
-def _history_text(history: list[Message]) -> str:
-    if not history:
-        return "none"
-    return "\n".join(f"{m.role}: {m.content}" for m in history[-6:])
-
-
 def _turn_call(
     ctx: Context,
     message: str,
@@ -602,14 +627,8 @@ def _turn_call(
 ) -> MobTurn:
     """The turn for the message; ``repair`` is lint's problems and the turn they were in."""
     budget = ctx.config.logic.context_tokens - ctx.config.logic.max_tokens
-    turn_prompt = load_prompt(
-        "mob_turn",
-        catalogue=_CATALOGUE,
-        mobs=_mobs_text(ctx),
-        history=_history_text(history),
-        message=message,
-    )
-    sections = [(0, turn_prompt)]
+    head = load_prompt("mob_turn", catalogue=_CATALOGUE, mobs=_mobs_text(ctx))
+    sections = turn_sections(TurnPrompt(head, history, message), budget)
     if repair is not None:
         problems, previous = repair
         sections.append(
@@ -620,6 +639,7 @@ def _turn_call(
                 ),
             )
         )
+    step = "repairing mob edits" if repair is not None else "planning mob edits"
     return call_structured(
         ctx.llm,
         "logic",
@@ -630,6 +650,8 @@ def _turn_call(
         MobTurn,
         ctx.config.max_repairs,
         extra_check=lambda turn: turn_problems(ctx, turn),
+        status=ctx.status,
+        step=step,
     )
 
 
@@ -665,6 +687,8 @@ def _rewrite_call(ctx: Context, rid: str, guidance: str) -> str:
         MobProse,
         ctx.config.max_repairs,
         extra_check=prose_check(rid),
+        status=ctx.status,
+        step=f"rewriting mob prose ({rid})",
     ).desc
 
 

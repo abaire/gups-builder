@@ -16,17 +16,18 @@ from pydantic import BaseModel
 
 from gups_builder.engine.lint import LintFinding  # noqa: TC001
 from gups_builder.engine.staging import staged_world
+from gups_builder.prompting import estimate_tokens, fit_lines, load_prompt
 from gups_builder.star.writer import apply_ops
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
     from pathlib import Path
 
     from gups_builder.config import Config
     from gups_builder.engine.api import ApiEntry, ApiModel
     from gups_builder.engine.gups import TestRun
     from gups_builder.engine.world import WorldDescription
-    from gups_builder.llm.client import LlmClient
+    from gups_builder.llm.client import LlmClient, Message
     from gups_builder.star.ops import StarOp
     from gups_builder.star.reader import PackageView
 
@@ -56,6 +57,7 @@ class Context:
     llm: LlmClient
     config: Config
     engine: Engine
+    status: Callable[[str], None] = field(default_factory=lambda: lambda _: None)
 
 
 @dataclass
@@ -93,6 +95,56 @@ class Turn(BaseModel):
     reply: str
     other_mode: Literal["area", "mob", "skill"] | None = None
     note: str | None = None
+
+
+def brief_request(request: str, earlier: Sequence[tuple[str, str]] = ()) -> str:
+    """The conversation a brief is drafted from, ending with the latest message.
+
+    ``earlier`` is the brief's own conversation as (role, text) pairs, the user's
+    request first, then each of the builder's questions and the user's answer.
+    Each turn's text is the last turn's with lines added at the end, so a server's
+    prefix cache keeps all of it.
+    """
+    turns = [*earlier, ("user", request)]
+    lines = [f"{'You' if role == 'builder' else 'User'}: {text}" for role, text in turns]
+    return (
+        "The conversation, oldest first; the last User line is the latest message. Everything "
+        "answered here is settled: keep it, and never ask about it again.\n" + "\n".join(lines)
+    )
+
+
+@dataclass
+class TurnPrompt:
+    """A follow-up turn's prompt parts.
+
+    ``head`` (the rules, the catalogue and the package as it stands) and ``middle``
+    (droppable context) change only when the package does; the history only grows.
+    """
+
+    head: str
+    history: list[Message]
+    message: str
+    middle: Sequence[tuple[int, str]] = ()
+
+
+def turn_sections(prompt: TurnPrompt, budget: int) -> list[tuple[int, str]]:
+    """The turn's sections: what stays the same first, so a prefix cache keeps it, then
+    the conversation, which gets all the room the rest leaves (``middle`` included, so a
+    middle section drops only when the fixed parts alone overflow)."""
+    bare = load_prompt("turn_tail", history="", message=prompt.message)
+    fixed = prompt.head + bare + "".join(text for _, text in prompt.middle)
+    lines = [f"{m.role}: {m.content}" for m in prompt.history]
+    history = fit_lines(lines, budget - estimate_tokens(fixed))
+    tail = load_prompt("turn_tail", history=history, message=prompt.message)
+    return [(0, prompt.head), *prompt.middle, (0, tail)]
+
+
+def one_question[B: BaseModel](brief: B) -> B:
+    """A brief asks at most one question; the user answers it before the next is asked."""
+    questions: list[str] = getattr(brief, "questions", [])
+    if len(questions) <= 1:
+        return brief
+    return brief.model_copy(update={"questions": questions[:1]})
 
 
 def _entry(api: ApiModel, decl: str) -> ApiEntry | None:
@@ -160,12 +212,14 @@ def stage_and_check(ctx: Context, proposal: Proposal, builder_test: str | None) 
             (pkg / name).write_text(text, encoding="utf-8")
         if builder_test is not None:
             (pkg / "builder_test.star").write_text(builder_test, encoding="utf-8")
+        ctx.status("Validating in staged world (gups lint)...")
         findings = ctx.engine.lint(ctx.package, staged)
         errors = [f for f in findings if f.severity == "error"]
         warnings = [f for f in findings if f.severity == "warning"]
         if errors:
             return Check(lint_errors=errors, lint_warnings=warnings)
         if _is_zone(ctx) or builder_test is not None:
+            ctx.status("Running package tests (gups test)...")
             run = ctx.engine.test(ctx.package, staged)
             return Check(
                 lint_errors=[], lint_warnings=warnings, test_failure=None if run.ok else run.output

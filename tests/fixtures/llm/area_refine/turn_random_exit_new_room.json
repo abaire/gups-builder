@@ -1,0 +1,9 @@
+{
+  "kind": "edit",
+  "reply": "Added a funhouse east of the parlour.",
+  "edits": [
+    {"edit": "add_room", "id": "funhouse", "concept": "a funhouse", "at": {"x": 3, "y": 0, "z": 0}, "size": "normal", "tags": []},
+    {"edit": "connect", "a": "funhouse", "b": "parlour"},
+    {"edit": "add_random_exit", "random_exit": {"room": "funhouse", "exit": "mirror_maze", "to": ["hall", "study"]}}
+  ]
+}

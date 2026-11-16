@@ -1,10 +1,10 @@
 {
   "rooms": [
-    {"id": "hall", "concept": "a grand entrance hall", "at": {"x": 0, "y": 0, "z": 0}, "size": "large", "tags": []},
-    {"id": "nursery", "concept": "an old nursery", "at": {"x": 1, "y": 1, "z": 1}, "size": "normal", "tags": []}
+    {"id": "hall", "concept": "a grand entrance hall", "size": "large", "tags": []},
+    {"id": "nursery", "concept": "an old nursery", "size": "normal", "tags": []}
   ],
-  "connections": [
-    {"a": "hall", "b": "nursery"}
+  "passages": [
+    {"a": "hall", "b": "nursry", "direction": "up"}
   ],
   "portals": [],
   "keys": [],

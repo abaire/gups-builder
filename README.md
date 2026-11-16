@@ -131,6 +131,41 @@ edited the written files by hand. `/reload` re-reads the world and the package; 
 modes and print any request noted for them; `/notes` lists those requests; `/help` and `/quit` do what they say. A
 request that belongs to another mode is noted, not attempted, so you can switch and pick it up.
 
+### Planning an area before building
+
+In `area` mode, you can iterate on a draft plan before generating rooms. Run `/plan` (or `/plan <description>`) to enter
+planning mode — the prompt changes to `(plan) > ` — and refine the area across as many turns as you like. Each turn
+updates the draft brief (theme, style, room count, room concepts and settled decisions) without touching the room graph.
+Run `/plan` on its own to reprint the current draft, or `/plan off` to leave planning mode while keeping the draft.
+
+When the plan looks right, run `/build` to leave planning mode and generate a proposal from the settled brief and its
+decisions (starting from a clean context, without the back-and-forth conversation). You can also run `/build` after a
+direct `area` turn asks a clarifying question to build from the draft as it stands.
+
+```
+> /plan a medium sized creepy mansion with a cellar
+Plan: The Creeping Mansion
+Theme: Decaying gothic manor with an abandoned cellar
+Style: Spare, atmospheric prose
+Size: 8-15 rooms
+Rooms:
+  - Entrance hall with a dusty chandelier
+  - Damp stone cellar beneath the kitchen
+  ...
+Decisions:
+  - Includes a cellar beneath the main floor
+(plan) > add a locked library upstairs; other doors stay unlocked
+...
+(plan) > /build
++10 rooms, +1 item, 22 exits
+[A]-[B]-[D]
+ |
+[C]-[E]
+...
+```
+
+The resulting proposal behaves like any other: inspect it with `/diff` or `/map`, and save it with `/write`.
+
 ### The other two modes
 
 The same session flow works in `mob` and `skill` modes — from the `mob` and `skill` subcommands, or by switching

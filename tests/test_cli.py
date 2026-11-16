@@ -3,7 +3,8 @@ from pathlib import Path
 import pytest
 
 from gups_builder import cli
-from gups_builder.session import Session
+from gups_builder.config import Config
+from gups_builder.session import PendingChange, Session
 
 
 def test_sessions_lists_sessions(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -107,15 +108,22 @@ def test_models_empty_api_key_is_not_set(
     )
 
 
+def _fake_tty(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    monkeypatch.setattr("sys.stdout.isatty", lambda: True)
+
+
 def test_resume_of_a_missing_session_fails_cleanly(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    _fake_tty(monkeypatch)
     rc = cli.main(["--world", str(tmp_path), "resume", "nope"])
     assert rc == 1
     assert "no session named 'nope'" in capsys.readouterr().out
 
 
 def _capture_start(monkeypatch: pytest.MonkeyPatch) -> list[Session]:
+    _fake_tty(monkeypatch)
     started: list[Session] = []
 
     def start(_world: Path, _config: object, session: Session) -> int:
@@ -184,3 +192,79 @@ def test_models_tty_launches_tui_and_check_bypasses_tui(
     assert cli.main(["--world", str(tmp_path / "world"), "models", "--check"]) == 1
     assert len(tui_calls) == 1
     assert "logic: FAILED: the model is not configured" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["area"],
+        ["area", "zones/mansion"],
+        ["mob", "zones/caves"],
+        ["skill", "skills/arcane"],
+        ["resume", "nope"],
+    ],
+)
+def test_interactive_commands_require_terminal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    argv: list[str],
+) -> None:
+    monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+    monkeypatch.setattr("sys.stdout.isatty", lambda: False)
+
+    def fail_if_called(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("should have exited before prompting or starting")
+
+    monkeypatch.setattr("builtins.input", fail_if_called)
+    monkeypatch.setattr(cli, "_start_repl", fail_if_called)
+    monkeypatch.setattr(cli, "run_area_tui", fail_if_called)
+
+    assert cli.main(["--world", str(tmp_path), *argv]) == 1
+    assert "terminal" in capsys.readouterr().out.lower()
+    assert not (tmp_path / ".builder" / "sessions").exists()
+
+
+def test_area_without_package_launches_tui_and_starts_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    started = _capture_start(monkeypatch)
+    seen: list[Path] = []
+
+    def fake_area_tui(world: Path) -> str:
+        seen.append(world)
+        return "zones/mansion"
+
+    monkeypatch.setattr(cli, "run_area_tui", fake_area_tui)
+    assert cli.main(["--world", str(tmp_path), "area"]) == 0
+    assert seen == [tmp_path]
+    assert started[0].state.mode == "area"
+    assert started[0].state.package == "zones/mansion"
+
+
+def test_area_without_package_tui_cancelled_exits_cleanly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    started = _capture_start(monkeypatch)
+    monkeypatch.setattr(cli, "run_area_tui", lambda _world: None)
+    assert cli.main(["--world", str(tmp_path), "area"]) == 0
+    assert started == []
+
+
+def test_toolbar_shows_the_pending_summary_and_nothing_when_none(tmp_path: Path) -> None:
+    session = Session.create(tmp_path, "area", "zones/mansion")
+    session.state.planning = True
+    config = Config()
+    config.logic.model = "big"
+
+    idle = cli.toolbar_text(session.state, config)
+    assert "mode: area (plan)" in idle
+    assert "logic: big" in idle
+    assert "prose: (not set)" in idle
+    assert "idle" not in idle
+    assert idle.rstrip().endswith("prose: (not set)")
+
+    session.state.pending = PendingChange(
+        ops=[], new_files={}, base_hashes={}, summary="3 rooms, 2 items"
+    )
+    assert cli.toolbar_text(session.state, config).rstrip().endswith("| 3 rooms, 2 items")

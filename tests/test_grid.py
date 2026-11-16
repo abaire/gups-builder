@@ -6,8 +6,12 @@ import pytest
 
 from gups_builder.engine.world import ExitInfo, RoomInfo, WorldDescription
 from gups_builder.grid.ascii import render_map
-from gups_builder.grid.derive import derive_exits, direction_between, validate
-from gups_builder.grid.model import Connection, DoorSpec, Grid, GridRoom, Portal
+from gups_builder.grid.derive import (
+    derive_exits,
+    direction_between,
+    validate,
+)
+from gups_builder.grid.model import Connection, DoorSpec, Grid, GridRoom, Portal, RandomExit
 from gups_builder.grid.place import place_existing
 
 
@@ -117,7 +121,10 @@ def test_validate_reports_two_rooms_on_one_coordinate() -> None:
         portals=[],
     )
     problems = validate(grid, entry="hall", room_range=None, known_items=set())
-    assert "'hall' and 'attic' share the coordinate (0,0,0)" in problems
+    assert (
+        "'hall' and 'attic' share the coordinate (0,0,0); move one of them to a free coordinate"
+        in problems
+    )
 
 
 def test_validate_reports_a_non_adjacent_connection() -> None:
@@ -141,7 +148,10 @@ def test_validate_reports_a_room_using_the_same_exit_name_twice() -> None:
         portals=[Portal(a="hall", a_exit="north", b="a")],
     )
     problems = validate(grid, entry="hall", room_range=None, known_items=set())
-    assert "'hall' uses the exit name 'north' twice" in problems
+    assert (
+        "'hall' uses the exit name 'north' for both 'b' and 'a'; give one of them another "
+        "direction or exit name"
+    ) in problems
 
 
 def test_validate_reports_a_connection_naming_an_unknown_room() -> None:
@@ -151,7 +161,10 @@ def test_validate_reports_a_connection_naming_an_unknown_room() -> None:
         portals=[],
     )
     problems = validate(grid, entry="hall", room_range=None, known_items=set())
-    assert "the connection from 'hall' names the unknown room 'ghost'" in problems
+    assert (
+        "the connection from 'hall' names the unknown room 'ghost'; use a room id of the plan"
+        in problems
+    )
 
 
 def test_validate_reports_a_portal_naming_an_unknown_room() -> None:
@@ -161,7 +174,10 @@ def test_validate_reports_a_portal_naming_an_unknown_room() -> None:
         portals=[Portal(a="hall", a_exit="escape", b="ghost")],
     )
     problems = validate(grid, entry="hall", room_range=None, known_items=set())
-    assert "the portal from 'hall' names the unknown room 'ghost'" in problems
+    assert (
+        "the portal from 'hall' names the unknown room 'ghost'; use a room id of the plan"
+        in problems
+    )
 
 
 def test_validate_reports_an_unreachable_room() -> None:
@@ -175,7 +191,10 @@ def test_validate_reports_an_unreachable_room() -> None:
         portals=[],
     )
     problems = validate(grid, entry="hall", room_range=None, known_items=set())
-    assert "'cellar' is not reachable from 'hall'" in problems
+    # The cellar is joined to nothing: one passage settles both, so it is reported once.
+    assert problems == [
+        "'cellar' is not reachable from 'hall'; add a connection or portal that leads to it"
+    ]
 
 
 def test_validate_counts_doors_as_passable_for_reachability() -> None:
@@ -194,7 +213,7 @@ def test_validate_reports_the_room_count_when_out_of_range() -> None:
         portals=[],
     )
     problems = validate(grid, entry="hall", room_range=(4, 8), known_items=set())
-    assert "the plan has 2 rooms; the request calls for 4 to 8" in problems
+    assert "the plan has 2 rooms; the request calls for 4 to 8, so add 2" in problems
 
 
 def test_validate_reports_a_locked_door_without_a_key() -> None:
@@ -204,7 +223,10 @@ def test_validate_reports_a_locked_door_without_a_key() -> None:
         portals=[],
     )
     problems = validate(grid, entry="hall", room_range=None, known_items={"brass_key"})
-    assert "the locked door between 'hall' and 'armory' has no key" in problems
+    assert (
+        "the locked door between 'hall' and 'armory' has no key; name its key and plan the key"
+        in problems
+    )
 
 
 def test_validate_reports_a_key_that_is_not_an_item_of_the_plan() -> None:
@@ -215,9 +237,9 @@ def test_validate_reports_a_key_that_is_not_an_item_of_the_plan() -> None:
     )
     problems = validate(grid, entry="hall", room_range=None, known_items={"brass_key"})
     assert (
-        "the door between 'hall' and 'armory' has the key 'ghost', which is not an item of the plan"
-        in problems
-    )
+        "the door between 'hall' and 'armory' has the key 'ghost', which is not an item of the "
+        "plan; plan the key or name a planned one"
+    ) in problems
 
 
 def test_validate_reports_a_portal_without_a_return_exit_when_a_exit_is_not_standard() -> None:
@@ -228,7 +250,8 @@ def test_validate_reports_a_portal_without_a_return_exit_when_a_exit_is_not_stan
     )
     problems = validate(grid, entry="hall", room_range=None, known_items=set())
     assert (
-        "the portal from 'hall' has the non-standard exit 'escape' and no return exit" in problems
+        "the portal from 'hall' has the non-standard exit 'escape' and no return exit; set b_exit, "
+        "or make the portal one_way" in problems
     )
 
 
@@ -261,15 +284,22 @@ def test_validate_names_the_missing_end_of_a_connection() -> None:
         portals=[Portal(a="ghost", a_exit="escape", b="hall", b_exit="back")],
     )
     problems = validate(grid, entry="hall", room_range=None, known_items=set())
-    assert "the connection to 'hall' names the unknown room 'ghost'" in problems
-    assert "the portal to 'hall' names the unknown room 'ghost'" in problems
+    assert "the connection to 'hall' names the unknown room 'ghost'; use a room id of the plan" in (
+        problems
+    )
+    assert "the portal to 'hall' names the unknown room 'ghost'; use a room id of the plan" in (
+        problems
+    )
     assert not any("unknown room 'hall'" in problem for problem in problems)
 
 
 def test_validate_reports_an_entry_room_that_is_not_in_the_plan() -> None:
     grid = Grid(rooms=[GridRoom(id="hall", coord=(0, 0, 0))], connections=[], portals=[])
     problems = validate(grid, entry="foyer", room_range=None, known_items=set())
-    assert problems == ["the entry room 'foyer' is not in the plan"]
+    assert problems == [
+        "the entry room 'foyer' is not in the plan; use a room id of the plan",
+        "'hall' has no exits; add a way out of it",
+    ]
 
 
 def test_place_existing_tutorial_rooms_from_describe_world(world_min: WorldDescription) -> None:
@@ -369,7 +399,7 @@ def test_render_map_of_a_crossing_diagonal_grid() -> None:
     )
     names = {"a": "A Room", "b": "B Room", "c": "C Room", "d": "D Room"}
     assert render_map(grid, 0, names) == (
-        "[C]----[B]\n     X\n[A]----[D]\nA a: A Room\nB b: B Room\nC c: C Room\nD d: D Room"
+        "[C]-----[B]\n     X\n[A]-----[D]\nA a: A Room\nB b: B Room\nC c: C Room\nD d: D Room"
     )
 
 
@@ -379,7 +409,7 @@ def test_render_map_of_a_single_diagonal() -> None:
         connections=[Connection(a="a", b="b")],
         portals=[],
     )
-    assert render_map(grid, 0, {}) == "       [B]\n     /\n[A]\nA a\nB b"
+    assert render_map(grid, 0, {}) == "        [B]\n     /\n[A]\nA a\nB b"
 
 
 def test_render_map_draws_connections_and_letters_in_id_order() -> None:
@@ -424,8 +454,23 @@ def test_render_map_marks_up_down_and_portal_together_and_keeps_the_connector() 
             Connection(a="hall", b="cellar"),
         ],
         portals=[Portal(a="hall", a_exit="north", b="vault")],
+        random_exits=[RandomExit(room="hall", exit="swirl", to=["kitchen", "attic"])],
     )
-    assert render_map(grid, 0, {}) == "[A]^v*-[B]\nA hall\nB kitchen"
+    assert render_map(grid, 0, {}) == "[A]^v*?-[B]\nA hall\nB kitchen"
+
+
+def test_render_map_marks_a_random_exit_only_on_its_own_room() -> None:
+    grid = Grid(
+        rooms=[
+            GridRoom(id="hall", coord=(0, 0, 0)),
+            GridRoom(id="kitchen", coord=(1, 0, 0)),
+            GridRoom(id="pantry", coord=(2, 0, 0)),
+        ],
+        connections=[Connection(a="hall", b="kitchen"), Connection(a="kitchen", b="pantry")],
+        portals=[],
+        random_exits=[RandomExit(room="hall", exit="swirl", to=["kitchen", "pantry"])],
+    )
+    assert render_map(grid, 0, {}).splitlines()[0] == "[A]---?-[B]-----[C]"
 
 
 def test_render_map_letters_continue_past_z() -> None:
@@ -447,3 +492,26 @@ def test_render_map_of_an_empty_level() -> None:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+def test_validate_says_how_many_rooms_to_remove() -> None:
+    grid = Grid(
+        rooms=[GridRoom(id="hall", coord=(0, 0, 0)), GridRoom(id="gate", coord=(1, 0, 0))],
+        connections=[Connection(a="hall", b="gate")],
+        portals=[],
+    )
+    problems = validate(grid, entry="hall", room_range=(1, 1), known_items=set())
+    assert "the plan has 2 rooms; the request calls for 1 to 1, so remove 1" in problems
+
+
+def test_validate_leaves_out_what_follows_from_a_broken_connection() -> None:
+    # 'gate' is cut off only because its connection names a typo: one sentence says so.
+    grid = Grid(
+        rooms=[GridRoom(id="hall", coord=(0, 0, 0)), GridRoom(id="gate", coord=(1, 0, 0))],
+        connections=[Connection(a="hall", b="gaet")],
+        portals=[],
+    )
+    problems = validate(grid, entry="hall", room_range=None, known_items=set())
+    assert problems == [
+        "the connection from 'hall' names the unknown room 'gaet'; use a room id of the plan"
+    ]

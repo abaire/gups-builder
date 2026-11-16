@@ -15,12 +15,13 @@ from prompt_toolkit.history import FileHistory
 from pydantic import BaseModel, ValidationError
 from rich.console import Console
 
+from gups_builder.area_tui import run_area_tui
 from gups_builder.config import Config, RoleConfig, load_config
 from gups_builder.engine.gups import EngineError, Gups
 from gups_builder.llm.client import HttpLlm, LlmError, Message
 from gups_builder.llm.log import CallLog
 from gups_builder.models_tui import run_models_tui
-from gups_builder.repl import Repl, context_factory
+from gups_builder.repl import Repl, context_factory, session_log_path
 from gups_builder.session import Mode, Session, SessionState
 
 if TYPE_CHECKING:
@@ -126,9 +127,24 @@ def _run_models(args: argparse.Namespace) -> int:
     return exit_code
 
 
-def _make_read_line(history_path: Path) -> Callable[[str], str]:
+def toolbar_text(state: SessionState, config: Config) -> str:
+    """The prompt's bottom toolbar; it ends with the pending proposal's summary, if any."""
+    planning = " (plan)" if state.planning else ""
+    logic = config.logic.model or "(not set)"
+    prose = config.prose.model or "(not set)"
+    pending = f" | {state.pending.summary}" if state.pending else ""
+    return (
+        f" gups-builder | mode: {state.mode}{planning} | pkg: {state.package} | "
+        f"logic: {logic} | prose: {prose}{pending} "
+    )
+
+
+def _make_read_line(session: Session, config: Config, history_path: Path) -> Callable[[str], str]:
     history_path.parent.mkdir(parents=True, exist_ok=True)
-    return PromptSession(history=FileHistory(str(history_path))).prompt
+    return PromptSession(
+        history=FileHistory(str(history_path)),
+        bottom_toolbar=lambda: toolbar_text(session.state, config),
+    ).prompt
 
 
 def _start_repl(world: Path, config: Config, session: Session) -> int:
@@ -138,19 +154,37 @@ def _start_repl(world: Path, config: Config, session: Session) -> int:
         print(str(error))
         return 1
     gups = Gups(binary, world)
-    llm = HttpLlm(config, CallLog(world / ".builder" / "logs" / f"{session.state.name}.jsonl"))
+    console = Console()
+    llm = HttpLlm(config, CallLog(session_log_path(world, session.state.name)))
     ctx_factory = context_factory(world, session.state.package, gups, llm, config)
     return Repl(
-        session, ctx_factory, Console(), _make_read_line(world / ".builder" / "history")
+        session,
+        ctx_factory,
+        console,
+        _make_read_line(session, config, world / ".builder" / "history"),
     ).run()
 
 
+def _require_terminal() -> bool:
+    if sys.stdin.isatty() and sys.stdout.isatty():
+        return True
+    print("Error: gups-builder requires an interactive terminal.")
+    return False
+
+
 def _run_mode(args: argparse.Namespace, mode: Mode) -> int:
+    if not _require_terminal():
+        return 1
     world = Path(args.world)
     config = load_config(world, _build_cli_dict(args), os.environ, Path.home())
     package = args.package
     if package is None:
-        package = input("Package path (e.g. zones/mansion): ").strip()
+        if mode == "area":
+            package = run_area_tui(world)
+            if package is None:
+                return 0
+        else:
+            package = input("Package path (e.g. zones/mansion): ").strip()
     if not package:
         print("no package given")
         return 1
@@ -185,6 +219,8 @@ def _run_mode(args: argparse.Namespace, mode: Mode) -> int:
 
 
 def _run_resume(args: argparse.Namespace) -> int:
+    if not _require_terminal():
+        return 1
     world = Path(args.world)
     config = load_config(world, _build_cli_dict(args), os.environ, Path.home())
     if not Session.path(world, args.session).exists():

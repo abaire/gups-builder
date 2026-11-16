@@ -1,9 +1,10 @@
 """The ASCII map of one level of the grid.
 
 Each room is a 3-character cell ``[A]`` with a letter code in id order, one
-block of seven columns per grid column: the cell, then a four-column gap. The
-first three gap columns hold the room's markers, ``^`` for an up exit, ``v``
-for down and ``*`` for a portal, each in its own column so none hides another.
+block of eight columns per grid column: the cell, then a five-column gap. The
+first four gap columns hold the room's markers, ``^`` for an up exit, ``v``
+for down, ``*`` for a portal and ``?`` for a random exit, each in its own
+column so none hides another.
 ``-`` fills the rest of the gap between east-west neighbours, so the last gap
 column always shows the link. ``|`` joins north-south neighbours under the
 cell's centre, and ``/`` and ``\\`` the diagonals in the row between, with an
@@ -18,17 +19,31 @@ from typing import TYPE_CHECKING
 from gups_builder.grid.derive import derive_exits
 
 if TYPE_CHECKING:
-    from gups_builder.grid.model import Grid
+    from gups_builder.grid.model import DerivedExit, Grid
 
-_BLOCK = 7  # cell (3) + marker columns (3) + a connector column that markers never use
+_BLOCK = 8  # cell (3) + marker columns (4) + a connector column that markers never use
 _MARKERS = {"up": (3, "^"), "down": (4, "v")}
 _PORTAL_COLUMN = 5
+_RANDOM_COLUMN = 6
 _DIAGONAL_COLUMN = 5
 _CODES = string.ascii_uppercase + string.ascii_lowercase + string.digits
 
 
 def _code(i: int) -> str:
     return _CODES[i] if i < len(_CODES) else "?"
+
+
+def _room_markers(grid: Grid, exits: list[DerivedExit]) -> dict[str, list[tuple[int, str]]]:
+    """Each room's markers, as (column offset in its block, mark)."""
+    markers: dict[str, list[tuple[int, str]]] = {}
+    for e in exits:
+        if e.direction in _MARKERS:
+            markers.setdefault(e.room, []).append(_MARKERS[e.direction])
+    for end in (end for p in grid.portals for end in (p.a, p.b)):
+        markers.setdefault(end, []).append((_PORTAL_COLUMN, "*"))
+    for random_exit in grid.random_exits:
+        markers.setdefault(random_exit.room, []).append((_RANDOM_COLUMN, "?"))
+    return markers
 
 
 def render_map(grid: Grid, z: int, names: dict[str, str]) -> str:
@@ -63,17 +78,13 @@ def render_map(grid: Grid, z: int, names: dict[str, str]) -> str:
         cells[r][c : c + 3] = list(f"[{letters[rid]}]")
 
     exits = derive_exits(grid)
-    portal_rooms = {end for p in grid.portals for end in (p.a, p.b)}
+    markers = _room_markers(grid, exits)
 
     # Markers first, so the east-west connector fills only the gap columns they leave.
     for rid, coord in placed:
         r, c = row_of(coord[1]), col_of(coord[0])
-        for e in exits:
-            if e.room == rid and e.direction in _MARKERS:
-                offset, mark = _MARKERS[e.direction]
-                cells[r][c + offset] = mark
-        if rid in portal_rooms:
-            cells[r][c + _PORTAL_COLUMN] = "*"
+        for offset, mark in markers.get(rid, []):
+            cells[r][c + offset] = mark
 
     diagonals: dict[tuple[int, int], set[str]] = {}
     for e in exits:

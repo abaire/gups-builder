@@ -50,7 +50,9 @@ class DoorInfo(BaseModel):
 class ExitInfo(BaseModel):
     model_config = _IGNORE_EXTRA
     dir: str
-    to: str
+    to: str | None = None
+    # A random exit has no ``to``; it picks one of these each crossing.
+    candidates: list[str] = []
     one_way: bool = False
     tags: list[str] = []
     door: DoorInfo | None = None

@@ -167,6 +167,23 @@ def test_a_brief_with_questions_is_returned_as_is(
     assert len(llm.calls) == 1
 
 
+def test_a_brief_hears_its_conversation_and_asks_one_question(
+    tmp_path: Path, world_min: WorldDescription
+) -> None:
+    brief = json.loads(_load(CREATE, "brief_questions.json"))
+    brief["questions"] = ["How strong?", "Which room?"]
+    llm = FakeLlm({"logic": [json.dumps(brief)]})
+    ctx, _ = _ctx(tmp_path, llm, world_min)
+    earlier = [("user", "two goblins"), ("builder", "Should they attack on sight?")]
+    result = create_mobs(ctx, "yes, on sight", earlier)
+    assert isinstance(result, MobBrief)
+    assert result.questions == ["How strong?"]
+    prompt = [m.content for m in llm.calls[0][1] if m.role == "user"][-1]
+    assert prompt.endswith(
+        "User: two goblins\nYou: Should they attack on sight?\nUser: yes, on sight"
+    )
+
+
 def test_creation_produces_the_expected_ops(tmp_path: Path, world_min: WorldDescription) -> None:
     llm = FakeLlm(
         {

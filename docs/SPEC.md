@@ -14,7 +14,8 @@ applies changes as minimal, formatting-preserving edits so the builder may edit 
 engine is the authority on the loaded world: `gups describe-world` gives the schema and declarations, `gups docs
 --json` gives the API model, and `gups lint` and `gups test` validate. The builder writes plain declaration arguments
 only — never Starlark functions — and where a request needs logic it inserts a `# TODO(gups-builder):` comment. Area
-rooms live on an integer grid where the model gives coordinates and Python derives every exit and door. Before a
+rooms live on an integer grid where the model says which way each passage runs, and Python lays the rooms out and
+derives every exit and door. Before a
 write, every request becomes a proposal that is applied to a temporary copy and run through `gups lint` and `gups
 test`, repaired with the logic model, and shown to the user as a summary, map and diff; nothing touches the real
 files until `/write`. In a zone package the builder owns one generated test, `builder_test.star`.
@@ -24,7 +25,7 @@ files until `/write`. In a zone package the builder owns one generated test, `bu
 Install with `uv tool install .`, which builds the package and puts `gups-builder` on the `PATH`. The tool drives two
 roles, `logic` and `prose`, each an OpenAI-compatible chat endpoint described by a `RoleConfig`: `base_url`
 (default `http://127.0.0.1:11434/v1`), `model` (default empty, meaning not set), `api_key` (default unset),
-`temperature` (default `0.2` for logic, `0.8` for prose), `max_tokens` (`4096`), `context_tokens` (`16384`),
+`temperature` (default `0.2` for logic, `0.8` for prose), `max_tokens` (`4096`), `context_tokens` (`32768`),
 `structured` (`json_schema`, `json_object` or `none`) and `timeout_s` (`300.0`). The whole configuration is a
 `Config` holding the two roles plus `max_repairs` (`3`) and `gups` (a path, default unset).
 
@@ -110,7 +111,16 @@ the model's `model_json_schema()`. A Markdown code fence around the reply is str
 reply fails to validate, or an `extra_check` returns complaints, the model's reply is appended as an assistant
 message and a user message `That reply was not valid:` listing each error as a `- ` line, ending `Reply again
 with the corrected JSON only.`, is added and the call is retried, up to `max_repairs` retries; then
-`StructuredCallFailed` is raised carrying every attempt and every error.
+`StructuredCallError` is raised carrying every attempt, every error (one per attempt) and the step's name. A call
+may pass a `normalize` function: a reply that parses is put through it before `extra_check` sees it, and the
+normalized reply is the one returned, so a call can fill in what the builder already knows instead of asking the
+model to repeat it. When a reply says the same as the one before it (the same text once a fence and surrounding
+whitespace are stripped, or the same JSON value), the next attempt is not a repair but one fresh request: the
+call's first messages, with the last of them followed by a blank line and `A previous reply to this request
+was:`, the reply, `It was not valid:`, the errors, and `Reply with a corrected JSON reply only, changing what each
+problem asks.`, so the model answers a prompt it has not answered before. A second repeat stops repairing, and so
+does a repeat on the last attempt: the error then carries the note `attempt <n> sent back attempt <n-1>'s reply
+unchanged, so the remaining repairs were skipped`, appended to its message in parentheses.
 
 Every call is appended to the JSONL call log as one JSON object with `ts` (ISO 8601), `role`, `model`,
 `messages`, `reply`, `seconds` and `error`. A request that fails outright (the 400 fallback raising, a timeout,
@@ -240,40 +250,106 @@ package, shown for reference and never given a coordinate. A `Connection` joins 
 adjacent rooms and may carry a `DoorSpec` (`open`, `closed` or `locked` state, a `key`
 that is an item id of the package or a full label, and free-form `tags`). A `Portal`
 is a named exit from room `a` (`a_exit`, any string) to room `b`, with the return name
-`b_exit` left to the opposite direction when the model does not choose one.
+`b_exit` left to the opposite direction when the model does not choose one; a portal
+marked `one_way` has no return exit at all, and its `b_exit` must be left out. A
+`RandomExit` is an exit from `room` named `exit` that sends whoever takes it to one of
+`to` (room ids, at least two distinct), picked anew at each crossing with equal chances.
+A `Passage` is how a plan names a way between two rooms before they have coordinates:
+rooms `a` and `b`, the `direction` from `a` to `b` (one of the ten standard directions),
+and an optional door.
+
+`spread_directions` settles a clash the builder can fix alone: a passage whose direction
+is already used at either end (as `a`'s exit, or as the opposite at `b`), counting the
+passages before it and the exits taken by portals and a link, is turned to the nearest
+free compass direction, trying one step clockwise, one back, two clockwise, and so on
+round the compass; up and down have no alternative, and a passage with no free direction
+keeps its own, for `validate` to report. `place_graph` spreads the passages before laying
+them out.
+
+`lay_out` turns a plan's room ids and passages into coordinates, connections and portals.
+The entry room (or the first room, when the entry is not one of them) goes to `(0,0,0)`,
+and each passage from a placed room to an unplaced one, in either direction, puts the
+unplaced room one step that way, while that cell is free. When no passage can place
+another room, the first passage that reaches an unplaced room puts it on the nearest free
+cell to the one it wanted, on that level, ring by ring outward; a room no passage reaches
+goes to the nearest free cell to `(max x + 2, 0, 0)`; then placing by passages resumes. A
+passage whose rooms end up one step apart in its direction becomes a connection; any other
+becomes a portal with the direction as `a_exit` and its opposite as `b_exit`, keeping the
+door, so the player still goes the way the plan said and only the map cannot draw it. A
+passage naming a room outside the plan stays a connection, for `validate` to report. A
+repeated id is one room to `lay_out`.
 
 The eight horizontal neighbours and straight up/down are the only adjacent pairs;
 `direction_between` names the direction (`north`, `south`, `east`, `west`, the four
 diagonals, `up`, `down`) and returns nothing otherwise. `derive_exits` turns the plan
-into exits in the order of connections then portals: each connection yields its two
+into exits in the order of connections, portals, then random exits: each connection yields its two
 exits with the door on both sides; each portal yields the two named exits, where a
 missing `b_exit` is the opposite of `a_exit` when `a_exit` is a standard direction and
-is omitted otherwise (validation reports it). A room whose `exits` is written by code
+is omitted otherwise (validation reports it). A portal's exits are both one-way unless `a_exit` is a standard
+direction and the return exit is its opposite: the engine pairs an exit with its way back only by opposite
+directions and lints any other exit without `one_way` as having no reverse, so such an exit is written with
+`one_way = True`. A link's two exits are written one-way on the same rule. A `one_way` portal yields only its
+`a` exit, marked one-way. A random exit yields one exit carrying its candidates (the plan's rooms among `to`,
+in order, without repeats; `to` is the first) and is written `exit(<name>, to = [":a", ":b"])`: the engine
+makes such an exit one-way and allows it no door, so neither is written. A room whose `exits` is written by code
 in the files never gets an exit here: only the plan's rooms and exits exist.
 
-`validate` returns every problem it finds, each a full sentence naming the rooms so
-the model can repair its plan: two rooms on one coordinate (`'hall' and 'attic' share
-the coordinate (0,0,0)`); a connection whose rooms are not adjacent (`'hall' (0,0,0)
+`validate` returns every problem it finds, each a full sentence naming the rooms and
+saying what to change, so the model can repair its plan: two rooms on one coordinate
+(`'hall' and 'attic' share the coordinate (0,0,0); move one of them to a free
+coordinate`); a connection whose rooms are not adjacent (`'hall' (0,0,0)
 and 'attic' (0,2,1) are not neighbours; use a portal`); a room using the same exit
-name twice, counting portals (`'hall' uses the exit name 'north' twice`); an
-entry room that is not in the plan (`the entry room 'foyer' is not in the plan`),
-which also skips the reachability check; a connection or portal naming a room
-that is not in the plan, once per missing end (`the connection from 'hall' names
-the unknown room 'ghost'` when the second end is missing, `the connection to
-'hall' names the unknown room 'ghost'` when the first is, and the same with
-`portal`); a room not reachable from the entry room through exits, doors
-counted as passable (`'cellar' is not reachable from 'hall'`); a room count outside
-the requested range (`the plan has 2 rooms; the request calls for 4 to 8`); a locked
-door without a key (`the locked door between 'hall' and 'armory' has no key`) and a
-key that is not an item of the plan (`the door between 'hall' and 'armory' has the
-key 'ghost', which is not an item of the plan`), each door reported once; a
+name twice, counting portals, naming where each leads (`'hall' uses the exit name
+'north' for both 'b' and 'a'; give one of them another direction or exit name`); an
+entry room that is not in the plan (`the entry room 'foyer' is not in the plan; use a
+room id of the plan`), which also skips the reachability check; a connection or portal
+naming a room that is not in the plan, once per missing end (`the connection from 'hall'
+names the unknown room 'ghost'; use a room id of the plan` when the second end is
+missing, `the connection to 'hall' names the unknown room 'ghost'; ...` when the first
+is, and the same with `portal`); a room not reachable from the entry room through exits,
+doors counted as passable and every exit followed only in its own direction, a random exit
+toward each of its rooms (`'cellar' is not reachable from 'hall'; add a connection or
+portal that leads to it`); a reachable room with no exit of its own, which the engine fails
+(`'rift' has no exits; add a way out of it`) — a room joined to nothing is reported once, as
+unreachable; a one-way portal with a return exit
+(`the one-way portal from 'maze_2' to 'kitchen' has the return exit 'ladder'; drop
+b_exit, or make the portal two-way`); a random exit with fewer than two distinct rooms
+(`the random exit 'trick_door' from 'maze_2' has fewer than two distinct rooms to pick
+from; list at least two, or use a portal`), named with a standard direction (`... uses a
+standard direction; give it a name of its own, like trick_door`), since a direction
+promises the room next door, or naming an unknown room (`... names the unknown room
+'ghost'; use a room id of the plan`); a room count outside the requested range (`the plan has 2
+rooms; the request calls for 4 to 8, so add 2`, or `so remove <n>` when there are too
+many); a locked door without a key (`the locked door between 'hall' and 'armory' has no
+key; name its key and plan the key`) and a key that is not an item of the plan (`the
+door between 'hall' and 'armory' has the key 'ghost', which is not an item of the plan;
+plan the key or name a planned one`), each door reported once; a
 non-external room without a coordinate that a connection joins (`'attic' has no
 coordinate but a connection joins it; give it a coordinate or reach it only by
 portals`) — a room without a coordinate is off the map, and only portals may
 reach it; and a portal whose non-standard
 `a_exit` leaves no return name (`the portal from 'hall' has the non-standard exit
-'escape' and no return exit`). External rooms are exempt from the coordinate and
-count rules.
+'escape' and no return exit; set b_exit, or make the portal one_way`); and an exit name the engine rejects (`'maze_2'
+has the exit name '2nd_door', which is not a valid exit name; use snake_case starting
+with a letter ([a-z][a-z0-9_]*)`). External rooms are exempt from the coordinate and
+count rules. When two rooms share a coordinate, a connection is not between neighbours,
+or a connection or portal names an unknown room, the unreachable and no-exit rooms are
+not reported: a broken link drops its exits, and every room past it would otherwise be
+listed too, all settled by the one fix already asked for.
+
+`snake_case_exits` puts every portal exit name in the engine's form: lower case, with
+each run of other characters an underscore (`One-way Trick Door` becomes
+`one_way_trick_door`); random exit names get the same. A name with nothing to keep is left as it is, and one that starts
+with a digit stays invalid, for `validate` to report.
+
+`name_clashing_exits` fixes the one clash the builder can settle without the model: a
+custom (non-standard) portal exit name used more than once in a room. Every such exit is
+renamed after the room it leads to (`trick_door_to_maze_1`), numbered from 2 when two
+still clash (`trick_door_to_kitchen_2`). A standard
+direction is never renamed, since it also fixes the portal's return exit; that clash is
+left to `validate`. Names the caller holds (a link's exit) and random exit names keep their
+name, and a portal clashing with one is renamed instead; two random exits sharing a name
+are reported by `validate`.
 
 `place_existing` puts the package's existing rooms (from `describe-world`) back on
 the grid: it starts from the saved coordinates, or, when none are saved, puts the
@@ -287,11 +363,14 @@ the grid adds the external rooms they name.
 
 `render_map` draws one `z` level, north at the top. Each room is a 3-character cell
 `[A]` with a letter code assigned in id order on that level (`A`–`Z`, then `a`–`z`,
-then `0`–`9`, then `?`), one block of seven columns per grid column: the cell and a
-four-column gap. The first three gap columns are the room's markers, each in its
-own column: `^` for an up exit, `v` for down and `*` for a portal. `-` fills the
+then `0`–`9`, then `?`), one block of eight columns per grid column: the cell and a
+five-column gap. The first four gap columns are the room's markers, each in its
+own column: `^` for an up exit, `v` for down, `*` for a portal and `?` for a random
+exit (on the room it leaves from only). `-` fills the
 gap columns the markers leave between east–west neighbours, so the last gap column
-always shows the link (`[A]^v*-[B]`). `|` joins north–south neighbours under the
+always shows the link (`[A]^v*?-[B]`). A grid built from the package's files
+(`/map`, the map after a refinement turn) holds its random exits whose rooms are
+all in the package. `|` joins north–south neighbours under the
 centre of the cell, `/` and `\` the diagonals in the row between, in the gap's
 third column, and `X` stands where a `/` and a `\` cross. Below the map a legend names each cell:
 `A hall: The Grand Hall`. A level with no rooms reads `no rooms on this level`;
@@ -377,7 +456,52 @@ can switch modes without re-typing it.
 ### 7.2 area
 
 The area mode owns zone packages: it creates them and refines them. Creation
-runs the brief, plan, prose and ops pipeline inside `finalize`.
+runs the brief, plan, prose and ops pipeline inside `finalize`. Before generating
+rooms directly, the user may enter interactive planning mode with `/plan` to
+discuss and iteratively refine a draft `AreaBrief` (`plan_area_turn`), then run
+`/build` (`build_from_plan`) to turn the settled brief into a proposal.
+
+**Decisions.** A brief carries `decisions`: every settled decision, one short line
+each in the user's terms ("10-15 rooms on each catacomb level", "doors are closed,
+never locked"). The brief and planning prompts tell the model to keep each earlier
+one, rewrite one only when the user changes it, and never drop one; a planning turn
+whose brief has lost one prints `no longer in the decisions: <line>`. The list is
+part of the session's `plan_brief`, so it survives the session, and `format_brief`
+shows it.
+
+**Folding.** A planning conversation's messages are never just dropped. The planning
+prompt holds `history[plan_folded:]`, everything the session has not folded yet. When
+that no longer fits the room the rest of the prompt leaves (`area_plan.py`), a
+separate logic call (`area_plan_fold`) reads the oldest messages — enough that the
+rest fills at most half the room, so the next fold is many turns away — with the
+decisions already recorded, and replies with the decisions those messages settled
+that the list does not hold yet. Code appends them (the model never rewrites the
+list there), `plan_folded` moves past the folded messages, the history opens with
+`(earlier messages are folded into the brief's decisions)`, and the loop prints
+`(folded <n> earlier messages into the decisions)`.
+
+**Clean build.** `/build` starts from a clean context: the brief and its decisions
+are what the planning settled, and none of the conversation goes along. For a
+package with no rooms it runs the creation pipeline (`build_from_brief`); the graph
+prompt lists the decisions as ones the plan must keep, and the brief it shows leaves
+out the open question. For a package with rooms it runs an edit turn whose request
+is `format_brief` (decisions included), with no history, carrying the brief's theme
+and style notes. The brief prompt and the planning-turn prompt both list what the builder
+can build — rooms, passages and named exits with doors and keys, one-way exits,
+random exits (equal chances, two or more rooms of the area, no door, no way back) and
+one requested link — and what it cannot: names and prose are written by the prose
+model at build time and cannot be asked for during planning, mobs and items other
+than keys belong to other modes, and scripted behaviour becomes a TODO note. A request
+outside the list is declined in the reply and made the one question. A planning turn
+also rewrites every room concept a later decision changed and drops an answered
+question.
+
+**One question at a time.** Every brief prompt (area, mob, skill, and the planning turn)
+tells the model to build rather than ask: a question only when the build cannot go ahead
+without the answer and no default will do, never about what the conversation already
+answers (nor, for an area, about a link the user did not ask for), none once the user
+says to build, and at most one. The code holds the last to it: a brief's `questions`
+is cut to its first entry (`one_question`) before it is returned or shown.
 
 **Brief.** The request goes to the logic model with the size words — `tiny`
 2–4 rooms, `small` 4–8, `medium` 8–15, `large` 15–30 — and the rooms already in the
@@ -385,22 +509,75 @@ package, all at priority 0, and the rooms of other packages that could be linked
 (label and name) at priority 2. The reply is a
 brief: a title, a theme, style notes, the room count as a minimum and maximum,
 a short concept for every intended room, and a link — the label of an existing
-room to connect to, or none. When the request leaves something important open,
-the brief carries questions and the mode returns it as-is, with no further
-calls.
+room to connect to, or none. The prompt asks for one concept per room, as many as the room count; a brief
+that lists fewer or more is not sent back for it, and is filled out when it is built (**Concepts**, below). The prompt asks for no link unless the request asks for one. A link given as a bare
+room id that names exactly one room of another package becomes that room's full label; a link that is not then
+a room of another package is a problem (`link_to '//zones/x:y' is not a room of another package; use the full
+label of one of the rooms listed as linkable, or null`). The same holds for the brief a planning turn returns.
+When the request leaves something important open,
+the brief carries one question and the mode returns it as-is, with no further
+calls. The request is the brief's conversation (`brief_request`): the user's
+first request, each question and the user's answer, and the latest message as
+the last `User:` line, marked settled, so an answer is never lost and is never
+asked for again. It goes last in the prompt, after the rules and the rooms.
 
-**Plan.** The brief goes to the logic model with the coordinate rules: rooms
-sit on an integer grid (x, y, z), with +y north, +x east and +z up; the eight
-horizontal neighbours and straight up and down are adjacent; adjacent rooms are
-joined with a connection, anything else with a portal; no two rooms share a
-coordinate; every room is reachable from the entry room; and a locked door
-names its key. The room sizes the model may choose are the `size` parameter's
-allowed values, or a note that the world has the track feature off. The reply
-is a plan: rooms with fresh snake_case ids, concepts, coordinates, sizes and
-tags; a connection for every pair of adjacent rooms, with a door when one
-belongs there; a portal for every non-adjacent link; a key for every locked
-door; the entry room; an optional link — one room, its exit, the external
-room's label, and the return exit; and todos.
+**Prefix caching.** Local servers reuse the cached prefix a prompt shares with
+the one before it, so every prompt that is sent turn after turn puts what stays
+the same first and what changes last. A model repair (`call_structured`) and a lint
+repair both add to the end of the prompt they repair. A brief's prompt is the rules, the rooms
+and the link candidates, then the conversation, which only grows at its end: each
+turn's prompt starts with the whole of the last one's. A planning turn's prompt is
+the rules and the package's rooms (`area_plan_turn`), the link candidates, then
+the conversation, the draft brief (rewritten each turn) and the message
+(`area_plan_turn_tail`), so a turn shares everything up to its new history lines;
+a fold moves the history's start once. The link candidates count against the
+history's room, so they drop only when the fixed parts alone overflow, not back and
+forth as the history grows. A refinement turn in area, mob or skill mode is the
+mode's rules, catalogue and current declarations (`area_turn`, `mob_turn`,
+`skill_turn`; area's spawnable mobs follow at priority 2, counted the same way),
+then `turn_tail`: the conversation, the message and the reply rules
+(`turn_sections`). Its history is the whole session's, as far as the room allows;
+past that `fit_lines` leaves out the oldest lines eight at a time rather than one,
+so its start holds for several turns instead of moving every turn. A refinement
+turn can lose old messages this way because the package's files hold what earlier
+turns settled. The declarations change only when the files do, after a `/write`.
+
+**Concepts.** Building from a brief whose concept count is outside its room count first
+makes one call (`area_concepts`) with the brief, less its concepts and questions, the
+concepts it lists as `- ` lines, and the range; the reply is `room_concepts`, which must
+keep the listed ones in order and add the rooms the decisions still need. A list longer than the
+maximum is cut to it, keeping the first concepts, since the listed ones come first and the
+model, against the real server, overshot by three and sent the same list back when asked
+to remove them; a list shorter than the minimum is a problem (`the list has 3 room
+concepts; the area needs 8 to 15, so add 5`). The call runs once per build, before the plan, so a lint repair
+keeps the list; a brief whose count already fits makes no call.
+
+**Plan.** The brief goes to the logic model with the layout rules: no
+coordinates, since the builder lays the rooms out; a passage joins two rooms and
+its direction is the way from the first to the second, one of the ten standard
+directions; a room has at most one passage, portal or exit in each direction; a
+portal is for an exit with a name of its own, never a compass direction; every
+room is reachable from the entry room; a locked door names its key; and exit
+names are snake_case. The room sizes the model may choose are the `size`
+parameter's allowed values, or a note that the world has the track feature off.
+The reply is a graph (`AreaGraph`): one room per concept, in the brief's order,
+with fresh snake_case ids, concepts, sizes and tags; a passage for every way that
+runs in a direction, with a door when one belongs there; a portal for every named
+exit, one-way with no return exit when there is no way back; a random exit for every
+exit that sends the player to a room picked at random, never named with a compass
+direction; a key for every locked door; the entry room; a todo on the room, not a
+portal, for an exit to an area not built yet; an optional link — one room, its exit,
+the external room's label, and the return exit; and todos. `place_graph` lays the
+graph out with `lay_out` into the plan (`AreaPlan`) the rest of the mode uses: the
+rooms with their coordinates, the passages as connections and portals (after the
+graph's own portals), and the rest as it is; a repeated room id after the first gets
+a spare cell east of the map, so it is reported as a repeat and not also as a shared
+coordinate. Every check below runs on the placed plan, and a repair shows the model
+its graph. The link is held to the brief before the plan is checked: a link
+in a plan whose brief names none is dropped, and otherwise its external room is set to the brief's. Then
+the link's exits and every portal and random exit name are put in snake_case, and clashing portal exit names are renamed
+by `name_clashing_exits`, holding the link's exit, so a plan is never sent back for a name the builder can
+fix. The plan prompt's layout rules also ask for snake_case exit names.
 
 The plan is validated before any prose is requested. Every problem is a full
 sentence the model can act on: two rooms sharing a coordinate; a connection or
@@ -413,10 +590,11 @@ ids, the item ids already declared in the package and every item label in the
 world; and a coordinate-less room joined by a connection. The rest of the plan
 is checked too: a room or key id that is not snake_case (`the id 'Silver Key' is
 not snake_case ([a-z][a-z0-9_]*)`), used twice in the plan (`the id 'hall' is
-used twice in the plan`) or already declared in the package (`the id 'hall' is
-already declared in the package`); a todo naming a room the plan lacks (`the todo
-names the unknown room 'attic'`); and a link that starts from an unknown room
-(`the link starts from the unknown room 'x'`), whose external room is not a room
+used twice in the plan; give one another id`) or already declared in the package (`the
+id 'hall' is already declared in the package; choose a fresh id`); a todo naming a room
+the plan lacks (`the todo names the unknown room 'attic'; use a room id of the plan`); and
+a link that starts from an unknown room (`the link starts from the unknown room 'x'; use
+a room id of the plan`), whose external room is not a room
 of the world (`the link's external room '//zones/x:y' does not exist`) or is in
 this package (`... is in this package`), whose non-standard exit has no return
 exit (`the link from 'hall' has the non-standard exit 'escape' and no return
@@ -429,7 +607,8 @@ is sound.
 
 **Prose.** One prose call per room, with the theme, the style notes, the room's
 concept and size, and its neighbours as `direction: concept` lines from the
-derived exits, with the door's state; the reply is a name and a
+derived exits, with the door's state, and a random exit as `name: one of <concept> or
+<concept>, picked anew each time someone goes through`; the reply is a name and a
 single-paragraph desc of 2 to 4 sentences that does not list the exits. One
 prose call per key, with the theme and concept; the reply is a name, keywords
 and a one-sentence desc. An empty name or desc, a newline in either, or a name
@@ -458,16 +637,16 @@ into `Proposal.link_ops`, with the external room's package in
 `kind = "zone"`, the brief's title, and `reset_world_ticks = 10`.
 
 The summary is `+<n> rooms, +<n> item(s), <n> exits`, counting the exits of
-the plan's connections and portals, and gains `, 1 link to <label> (needs
-confirmation)` when there is a link. The proposal's grid is one coordinate
+the plan's connections, portals and random exits, followed by ` (<n> random exit(s))`
+when there are any, and gains `, 1 link to <label> (needs confirmation)` when there is a link. The proposal's grid is one coordinate
 triple per room id. The generated test is computed from the package as it
 stands after the ops, so the staged check runs it.
 
 **Refinement.** A follow-up message in area mode goes to the logic model with
 the current rooms — id, name, coordinate or `off-map`, exits with their door
 state and key, spawns, and the fields computed by code, which the model must
-not edit — a note that only a portal may reach an off-map room, the last six
-messages of the conversation, the edit catalogue (one line per edit), and the
+not edit — a note that only a portal may reach an off-map room, the conversation
+as far as it fits (see **Prefix caching**), the edit catalogue (one line per edit), and the
 message. Every mob in the world that may be spawned (label, name, level) is a
 section of its own at priority 2. The reply is an `AreaTurn`.
 
@@ -489,7 +668,12 @@ problem is a sentence naming the rooms, sent back for repair.
 room's exits come from the connections drawn to it. A `remove_room` takes the
 room and every exit in the package that points at it. A `connect` or
 `set_door` draws or re-draws a passage; a `disconnect` removes one; an
-`add_portal` adds a portal's named exits. Exits are derived on both sides and,
+`add_portal` adds a portal's named exits; an `add_random_exit` (`room`, `exit`, `to`) adds one exit with a
+name of its own, written once as an `AppendItem` on `room` (in its `AddDecl` when the room is new) and never
+diffed with the passages. Its name is put in snake_case, and it is reported when the room already has an exit of
+that name, when it names a standard direction, or when it has fewer than two distinct rooms among `to`. The grid
+the turn is checked against holds the package's existing random exits whose rooms are all in it, so removing a
+room one of them picks is reported, and the turn prompt shows each as `name->one of a or b`. Exits are derived on both sides and,
 for a door, the door rides on both. The exits are turned into ops per passage
 an edit touches, on each side that stays, by comparing the derived exits with
 the exits the room has now (as `describe-world` reports them): an exit that
@@ -622,8 +806,8 @@ neighbours gets the vitals to match.
 the package's mobs — id, name, level, every field rendered as a value with
 calls named and constants bare, the fields computed by code marked `do not
 edit these`, and the mobs the reader could not hold as plain declarations
-marked — the edit catalogue (one line per edit), the last six messages of the
-conversation, and the message. The reply is a `MobTurn`.
+marked — the edit catalogue (one line per edit), the conversation as far as it
+fits (see **Prefix caching**), and the message. The reply is a `MobTurn`.
 
 The turn's edits are checked before any prose is requested, in order: an
 `add_mob` is checked like a one-mob plan, against the ids already declared and
@@ -746,8 +930,8 @@ build is staged and checked through lint alone.
 the package's skills — id, kind, every field rendered as a value with calls
 named and constants bare, the fields computed by code marked `do not edit
 these`, and the skills the reader could not hold as plain declarations marked —
-the edit catalogue (one line per edit), the last six messages of the
-conversation, and the message. The reply is a `SkillTurn`.
+the edit catalogue (one line per edit), the conversation as far as it fits (see
+**Prefix caching**), and the message. The reply is a `SkillTurn`.
 
 The turn's edits are checked before any prose is requested, in order: an
 `add_skill` is checked like a one-skill plan, against the ids already declared
@@ -830,6 +1014,22 @@ linked package's files too. The pending change is the proposal the user has not 
 ops and the package those edit, the sha256 of the files the ops were built against, a one-line summary, its notes,
 and the room coordinates after the change.
 
+The interactive commands (`area`, `mob`, `skill`, `resume`) require standard input and output to be attached to a
+terminal; otherwise they print a fatal error and exit 1 before prompting or creating a session. When `gups-builder
+area` is invoked without a `<package>` argument, it opens an interactive TUI listing the world's existing zone
+packages (plus a choice to enter a new zone path). A persistent bottom toolbar on `PromptSession` shows the current
+session badge, mode, plan status, package, logic and prose models, and the pending proposal's summary when there is
+one. When planning mode is active (`session.state.planning` is True), the prompt is `"(plan) > "`, falling back to
+`"> "` otherwise.
+During model turns, loading, and engine checks, a live status bar displays the current step progress and an elapsed
+timer (adding `(waiting for model...)` when elapsed time reaches 5 seconds), while `InputGuard` temporarily places
+`stdin` into cbreak/non-echoing mode to drain and discard buffered keystrokes and warn the user, pausing during
+interactive user prompts such as `/write` link return exit confirmations.
+After the badge the bar shows the context usage of the latest model call, `logic ctx ~3.2k/32.8k (10%)`: the
+role, the tokens it fills and the role's `context_tokens`. The client reports an estimate (four characters a
+token, marked `~`) as the call is sent, then the server's own `usage` count when the reply carries one (or the
+estimate plus the reply's). The last figure stays on the bar into the next turn.
+
 The session name defaults to the package's last path segment. `gups-builder area <package> [--name N]` offers to
 resume when a session of that name (given or default) exists for the same package; declining, a session of that
 name on another package, or no such session, creates a new one,
@@ -842,13 +1042,18 @@ The loop re-reads the package before every model turn and every command that rea
 `describe-world` (with `docs --json` once per process) — only when a file's hash has changed or `/reload` was typed.
 Before it talks to a model it checks the target package in `describe-world`; one listed with `ok: false` prints its
 errors and `Fix these first (the package doesn't load); /reload when done.` and sends nothing to a model, though
-`/reload`, `/show`, `/diff`, `/map`, `/notes`, `/help` and `/quit` still work. A package file that does not parse, or a
+`/reload`, `/show`, `/diff`, `/map`, `/notes`, `/log`, `/help` and `/quit` still work. A package file that does not parse, or a
 `describe-world` that fails, leaves the loop with no context: it prints the error (`<file>:<line>: <message>` for a
 parse error) and the same `Fix these first` line for every model turn and for `/map`, `/show`, `/diff` and `/write`,
 until the files parse again. Otherwise, plain text in area mode goes to `create_area` when the files hold no room
 declaration and no opaque room — the decision is made from the files, not from `describe-world`, so a package the
 engine has not loaded yet still creates — and to `area_turn` otherwise, which is given the history before the current
-message. A brief with questions prints the questions. A proposal becomes the pending change, replacing any earlier
+message. A brief with a question prints it, and the session's `brief_draft`
+gains the message and the question: the next message in the same mode goes to the
+same create function with that conversation, until a proposal or `/build` clears it
+(so does `/mode` to another mode). In area mode the draft brief also becomes
+`plan_brief`, and the loop prints `(answer, or /build to build from the draft as it
+stands)`: `/build` builds it with its question left to defaults. A proposal becomes the pending change, replacing any earlier
 one, and the loop prints its summary, its notes, the map of each affected `z` level — every level holding a room the
 proposal adds, moves, removes or edits, drawn from the package as it stands after the proposal, not as the world
 knows it — and the new or changed prose. A proposal's room coordinates become the session's `grid` only on `/write`,
@@ -857,10 +1062,18 @@ so a discarded proposal leaves none behind. An out-of-scope turn adds to the not
 is plain text, never rich markup. The session is saved after every handled line. `Ctrl-C` during a command or a model
 call cancels it and returns to the prompt, and at the prompt it starts a new line; `Ctrl-D` quits. A model call that
 fails (an HTTP error, or no valid reply after the repairs) or an engine command that fails is printed as
-`error: <message>` and the loop carries on.
+`error: <message>` and the loop carries on. When there is no valid reply after the repairs, the loop prints
+`error: model failed to produce a valid reply for <step> after <n> attempts`, then `attempt <i> of <n>:` with
+that attempt's problems for each attempt, then the note when repairing stopped early on a repeated reply. A
+failed model call ends with `The full exchange is in <log path>;
+/log to browse it.`
 
-The slash commands, exactly: `/map [z]` draws the map of the current package — every level with rooms by default, or
-one `z` — with the off-map rooms below it. `/show <id>` prints a declaration's source text, from its file. `/diff`
+The slash commands, exactly: `/plan [text|off]` in area mode enters interactive planning mode (running a planning turn
+immediately when `text` is given, printing the current draft brief when none is given, or leaving planning mode on
+`off`), and `/build` generates a proposal from the current `plan_brief` and leaves planning mode. `/build` first
+checks the brief's link as the brief call does (§7.2); a link that is not a room of another package prints the
+problem and `fix the link with /plan before /build`, and nothing is sent to a model. `/map [z]` draws the
+map of the current package — every level with rooms by default, or one `z` — with the off-map rooms below it. `/show <id>` prints a declaration's source text, from its file. `/diff`
 shows the pending change as a unified diff against the files as they are now, including the regenerated
 `builder_test.star`. `/write` writes it, in five steps: it re-reads the files and re-applies the pending ops to them,
 saying so when they changed since the proposal and printing each refusal; a new file that now exists is left as it is.
@@ -877,7 +1090,10 @@ were `None`, in the linked package too — with the `builder_test` hash and the 
 only while every written file still matches its recorded hash; otherwise it refuses with `<file> changed since the
 last write; /undo would lose those changes`. `/reload` rebuilds the context and names the files whose hashes changed.
 `/mode area|mob|skill` switches the session's mode, keeps the package, and prints any request noted for the new mode.
-`/notes` lists the noted requests. `/help` lists the commands; an unknown slash command prints `/help`; `/quit` leaves.
+`/notes` lists the noted requests. `/log` opens a full-screen pager over the session's call log, showing every
+call with each message and the reply in full and starting on the newest; `]` and `[` step between calls, `g` and
+`G` go to the first and last, `/` searches (`n` and `N` step between matches) and `q` leaves. With no log yet it says `no model calls logged yet`.
+`/help` lists the commands; an unknown slash command prints `/help`; `/quit` leaves.
 A package directory that does not exist is created when the first proposal is written, in area mode or in skill
 mode for a new package under `skills/`.
 
@@ -1041,6 +1257,58 @@ Decisions made to fill gaps the spec does not settle, each noted with the phase 
   `modes/mob.py` and `modes/skill.py` keep the brief, the prompts, the prose calls and the ops. `modes/area.py`
   re-exports the models its callers import from it (`AreaBrief`, `AreaPlan`, `AreaTurn`, `plan_to_grid`). The
   REPL's `/map` grid is now the area checks' own `grid_from_coords`, which built the same grid.
+- **Interactive REPL Enhancements:** `PromptSession` renders a bottom toolbar displaying session state (mode, plan indicator, package, logic model, prose model, and the pending proposal's summary when there is one). In planning mode (`session.state.planning` is True), the prompt is `"(plan) > "`, falling back to `"> "` otherwise. Model calls and engine operations report step-aware status updates and live progress, and `InputGuard` temporarily places `stdin` into cbreak/non-echoing mode during agent turns to drain and discard buffered keystrokes while warning the user, keeping user confirmation prompts (such as return exit confirmations during `/write`) unblocked.
+- **Fix after Milestone 1 (unrequested link):** a brief model offered a list of linkable rooms tended to pick
+  one unasked, and the plan model then echoed only its id (`gate`), which failed the external-room check on every
+  repair because the complaint never named the right label. The prompts now ask for a link only when the user
+  does. The plan's link is bound to the brief by `normalize` rather than checked against it: the brief is the
+  design the user agreed to, so a link it does not name is dropped silently instead of costing a repair, and the
+  external room is always the brief's. The brief's own link is checked instead, where the model can still choose
+  another room or none. A bare id in a brief resolves only when exactly one room of another package has it; a
+  `:id` is left alone, since it names this package. The `/log` pager is a `TextArea` with a search toolbar so the
+  long user messages (which carry the schema when `structured` is not `json_schema`) can be searched rather than
+  scrolled; it pauses the input guard while it runs, as the `/write` confirmation does. Calls are stepped with `]` and
+  `[` because the read-only buffer already binds `n` and `N` to the next and previous search match.
+- **Fix after Milestone 1 (repairs that never converge):** the logic model, asked to repair a plan in which
+  one room had two portals named `one-way trick door`, sent the same plan back on every attempt, 76 seconds each.
+  A clashing custom exit name is now renamed by the builder after where it leads, since any distinct name will
+  do and naming the destination is the one a player can use. Repairing stops as soon as a reply repeats the one
+  before it, since the same history would get the same reply again. Every plan problem now ends with what to
+  change, because a note that only names the problem gave the model nothing new to act on. A real-engine test
+  then showed two older faults behind every custom-named portal: the engine accepts only `[a-z][a-z0-9_]*`
+  exit names (the model writes `hidden passage`), and lints any exit that is not a standard direction with an
+  opposite return as having no reverse unless it is `one_way`. Names are now put in snake_case before checking,
+  and such exits are written `one_way = True` on both sides, which keeps the passage two-way for players. A
+  refinement turn's `add_portal` is not normalized yet: its names are still checked, and a clash still goes back
+  to the model.
+- **Fix after Milestone 1 (trick doors):** the brief asked for one-way trick doors that send the player to a
+  random room of a set, and the plan could express neither, so the model wrote ordinary two-way portals and the
+  planning turn told the user it had done what was asked. A portal now takes `one_way`, and a `RandomExit` lists
+  the rooms its exit picks among, written as the engine's exit picked per crossing. Its picks are equally likely:
+  the builder writes no weights and no `pick` function, since it writes no functions; a weighted or scripted pick
+  is a TODO for a person. A random exit may not use a standard direction, so the refinement diff, which matches
+  exits by direction, never mistakes one for a passage to a neighbour. Reachability now follows exits in their
+  own direction, and a room with no exit is reported, matching the engine's dead-end rule; a room the player
+  cannot leave the way they came is allowed, since a trap is a design choice. Refinement turns can add a one-way
+  portal (`add_portal` takes `one_way`) and, since a later fix, a random exit (`add_random_exit`, same rules and
+  same exit value as at creation; it was missing only because the edit list predated random exits). The planning prompts now
+  list what the builder can and cannot build, because the planning model had claimed to ask the prose model for
+  a name and to have built trick doors.
+- **Fix after Milestone 1 (plans that never placed):** a planning conversation for a 25–35 room mansion settled a
+  brief with 11 room concepts, and the plan model, asked for coordinates, padded it to 41 rooms (`north_attic`,
+  `east_basement`), put five pairs on one cell and joined 17 pairs that were not neighbours. Its repair request ran
+  to 60 lines, half of them rooms cut off only by those connections, and the model sent the same 10 KB plan back,
+  which ended the build after two attempts. The model now gives each passage a direction and the builder lays the
+  rooms out, turning a passage the grid cannot honour into a portal that keeps the direction as its exit name; a
+  room's cell is the builder's map, not something the player sees, so a portal costs nothing in play. Against the real model, the
+  first graph then failed only on rooms with two passages the same way, which it sent back unchanged three times;
+  those are now turned to the nearest free direction. A brief with
+  too few concepts is filled out by a call that only lists rooms, before the plan: a hard check on the planning
+  turn's brief was tried first, and against the real model the turn sent its 11-concept draft back three times,
+  fresh request included, so the turn failed. Rooms cut off
+  by a broken link are not listed beside it, and a repeated reply gets one fresh request, quoting the reply as text,
+  before repairing stops. A refinement turn's `add_room` still gives a coordinate, and is left as it is for now: it
+  places one room at a time beside rooms that already have theirs.
 - **Not built:** a standalone item mode (items exist only as loot and keys of the modes that place them), a
   hook-writing mode (the builder writes `# TODO(gups-builder):` comments where hooks belong, never functions),
   and a re-import of `describe-world` fields that are not in format 1 (a world that writes another format is

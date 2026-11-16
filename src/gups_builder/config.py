@@ -51,7 +51,7 @@ class RoleConfig(BaseModel):
     api_key: str | None = None
     temperature: float
     max_tokens: int = 4096
-    context_tokens: int = 16384
+    context_tokens: int = 32768
     structured: StructuredMode = "json_schema"
     timeout_s: float = 300.0
 

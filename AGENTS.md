@@ -14,6 +14,12 @@ Do not cite spec sections or decision IDs in code comments. Comments explain why
 reader who knows Python and the milestone. Assume the reader is familiar with the GUPS engine; explain only the
 builder's own choices.
 
+## Documentation
+
+When adding or changing user-facing features — subcommands, flags, REPL slash commands, config options, or workflows —
+check [README.md](README.md) and update it in the same change so the quick start, configuration, and layout stay
+accurate.
+
 ## Naming: skills, not spells
 
 Everything a character casts is a `skill`, and its `kind` is free-form; "spell" is only one kind. The interactive
