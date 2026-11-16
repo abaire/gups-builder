@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -227,3 +228,7 @@ def main(argv: list[str] | None = None) -> int:
         return _run_sessions(args)
     parser.print_help()
     return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
