@@ -4,20 +4,23 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
-from conftest import FakeEngine, PackageState, build_context, load_api, read_fixture
 
 from gups_builder.config import Config
 from gups_builder.engine.gups import Gups
 from gups_builder.engine.lint import LintFinding
-from gups_builder.engine.world import WorldDescription
 from gups_builder.llm.fake import FakeLlm
-from gups_builder.modes.area import AreaBrief, create_area, plan_to_grid
+from gups_builder.modes.area import AreaBrief, AreaPlan, create_area, plan_to_grid
 from gups_builder.modes.common import Context, Proposal
 from gups_builder.star.ops import AddDecl, AppendItem
 from gups_builder.star.reader import PackageView
-from gups_builder.star.values import Value
+from tests.conftest import FakeEngine, PackageState, build_context, load_api, read_fixture
+
+if TYPE_CHECKING:
+    from gups_builder.engine.world import WorldDescription
+    from gups_builder.star.values import Value
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "llm" / "area_mansion"
 
@@ -61,11 +64,11 @@ def _room_reply(rid: str) -> str:
     return json.dumps({"name": _room_name(rid), "desc": _room_desc(rid)})
 
 
-def _prose_replies(bad_first: bool = False) -> list[str]:
+def _prose_replies(*, bad_first: bool = False) -> list[str]:
     rooms = [_room_reply(rid) for rid in NoneS]
     if bad_first:
         rooms.insert(0, _load("prose_room_bad.json"))
-    return rooms + [_load("prose_item.json")]
+    return [*rooms, _load("prose_item.json")]
 
 
 def _decl(proposal: Proposal, rid: str) -> AddDecl:
@@ -449,8 +452,6 @@ def test_a_lint_repair_resends_the_plan_prompt_and_keeps_the_prose(
 
 
 def test_plan_to_grid_maps_rooms_connections_and_portals() -> None:
-    from gups_builder.modes.area import AreaPlan
-
     plan = AreaPlan.model_validate_json(_load("plan.json"))
     grid = plan_to_grid(plan)
     assert [room.id for room in grid.rooms] == [
@@ -470,9 +471,7 @@ def test_plan_to_grid_maps_rooms_connections_and_portals() -> None:
 
 
 @pytest.mark.engine
-def test_the_mansion_passes_the_real_engine(
-    tmp_path: Path, gups_bin: Path, template_world: Path
-) -> None:
+def test_the_mansion_passes_the_real_engine(gups_bin: Path, template_world: Path) -> None:
     gups = Gups(gups_bin, template_world)
     world = gups.describe_world()
     api = gups.api()

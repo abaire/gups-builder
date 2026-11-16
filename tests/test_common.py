@@ -53,7 +53,7 @@ class FakeEngine:
         self.package_files: dict[str, str] = {}
         self.test_world: Path | None = None
 
-    def describe_world(self, world: Path | None = None) -> WorldDescription:
+    def describe_world(self, world: Path | None = None) -> WorldDescription:  # noqa: ARG002
         return self._world
 
     def api(self) -> ApiModel:
@@ -72,7 +72,7 @@ class FakeEngine:
             return self._lint.pop(0)
         return []
 
-    def test(self, package: str, world: Path | None = None) -> TestRun:
+    def test(self, package: str, world: Path | None = None) -> TestRun:  # noqa: ARG002
         self.test_calls += 1
         self.test_world = world
         if self._tests:
@@ -178,7 +178,7 @@ def test_finalize_test_failure_is_a_builder_bug_not_a_repair(tmp_path: Path, api
         return _proposal()
 
     ctx = _ctx(tmp_path, engine)
-    proposal = finalize(ctx, build, lambda p: "def test_builder(t):\n    t.world(seed = 1)\n")
+    proposal = finalize(ctx, build, lambda _p: "def test_builder(t):\n    t.world(seed = 1)\n")
     assert calls == [[]]
     assert engine.test_calls == 1
     assert proposal.notes == [
@@ -189,7 +189,7 @@ def test_finalize_test_failure_is_a_builder_bug_not_a_repair(tmp_path: Path, api
 def test_finalize_puts_refused_ops_in_the_notes(tmp_path: Path, api: ApiModel) -> None:
     engine = FakeEngine(_world(), api, lint=[[]])
 
-    def build(problems: list[str]) -> Proposal:
+    def build(_problems: list[str]) -> Proposal:
         return _proposal(ops=[AddTodo(kind="room", id="ghost", text="haunt it")])
 
     proposal = finalize(_ctx(tmp_path, engine), build, None)

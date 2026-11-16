@@ -9,26 +9,29 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import pytest
-from conftest import load_api, read_fixture
 from rich.console import Console
 
 from gups_builder.config import Config
-from gups_builder.engine.api import ApiModel
 from gups_builder.engine.gups import Gups, TestRun
-from gups_builder.engine.lint import LintFinding
-from gups_builder.engine.world import WorldDescription
-from gups_builder.llm.client import Message, Role
 from gups_builder.llm.fake import FakeLlm
 from gups_builder.modes import testgen
-from gups_builder.modes.common import Context
 from gups_builder.repl import Repl, context_factory
 from gups_builder.session import Session
 from gups_builder.star.reader import read_package
+from tests.conftest import load_api, read_fixture
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from gups_builder.engine.api import ApiModel
+    from gups_builder.engine.lint import LintFinding
+    from gups_builder.engine.world import WorldDescription
+    from gups_builder.llm.client import Message, Role
+    from gups_builder.modes.common import Context
 
 REPO = Path(__file__).resolve().parent.parent
 AREA = Path(__file__).resolve().parent / "fixtures" / "llm" / "area_mansion"
@@ -59,22 +62,22 @@ class FakeEngine:
     def __init__(
         self, world: WorldDescription, api: ApiModel, lint: list[list[LintFinding]] | None = None
     ) -> None:
-        self._world = world
+        self.world = world
         self._api = api
         self._lint = list(lint or [])
         self.world_calls = 0
 
-    def describe_world(self, world: Path | None = None) -> WorldDescription:
+    def describe_world(self, world: Path | None = None) -> WorldDescription:  # noqa: ARG002
         self.world_calls += 1
-        return self._world
+        return self.world
 
     def api(self) -> ApiModel:
         return self._api
 
-    def lint(self, package: str, world: Path | None = None) -> list[LintFinding]:
+    def lint(self, package: str, world: Path | None = None) -> list[LintFinding]:  # noqa: ARG002
         return self._lint.pop(0) if self._lint else []
 
-    def test(self, package: str, world: Path | None = None) -> TestRun:
+    def test(self, package: str, world: Path | None = None) -> TestRun:  # noqa: ARG002
         return TestRun(ok=True, output="")
 
 
@@ -220,7 +223,7 @@ def test_mob_mode_creation_turn_becomes_the_pending_change(
             ],
         }
     )
-    repl, session, console, _ = _repl(
+    repl, session, _console, _ = _repl(
         tmp_path, world_min, llm, package="zones/tutorial", mode="mob"
     )
     repl.handle("two goblins, one a shaman")
@@ -270,7 +273,7 @@ def test_hand_edit_between_proposal_and_write_is_refused(
     llm = FakeLlm(
         {"logic": [_load(AREA, "brief.json"), _load(AREA, "plan.json")], "prose": _prose()}
     )
-    repl, session, console, _ = _repl(tmp_path, world_min, llm)
+    repl, _session, console, _ = _repl(tmp_path, world_min, llm)
     repl.handle("a medium sized creepy mansion")
     pkg = tmp_path / "world" / "zones" / "mansion"
     pkg.mkdir(parents=True)
@@ -285,7 +288,7 @@ def test_undo_restores_the_previous_files(tmp_path: Path, world_min: WorldDescri
     llm = FakeLlm(
         {"logic": [_load(AREA, "brief.json"), _load(AREA, "plan.json")], "prose": _prose()}
     )
-    repl, session, console, _ = _repl(tmp_path, world_min, llm)
+    repl, session, _console, _ = _repl(tmp_path, world_min, llm)
     repl.handle("a medium sized creepy mansion")
     repl.handle("/write")
     pkg = tmp_path / "world" / "zones" / "mansion"
@@ -299,7 +302,7 @@ def test_undo_after_a_hand_edit_is_refused(tmp_path: Path, world_min: WorldDescr
     llm = FakeLlm(
         {"logic": [_load(AREA, "brief.json"), _load(AREA, "plan.json")], "prose": _prose()}
     )
-    repl, session, console, _ = _repl(tmp_path, world_min, llm)
+    repl, _session, console, _ = _repl(tmp_path, world_min, llm)
     repl.handle("a medium sized creepy mansion")
     repl.handle("/write")
     pkg = tmp_path / "world" / "zones" / "mansion"
@@ -330,7 +333,7 @@ def test_a_broken_package_reports_errors_and_makes_no_model_call(
 ) -> None:
     # describe-world lists zones/broken with ok: false; no files, no rooms.
     llm = FakeLlm({"logic": []})
-    repl, session, console, engine = _repl(tmp_path, world_min, llm, package="zones/broken")
+    repl, session, console, _engine = _repl(tmp_path, world_min, llm, package="zones/broken")
     repl.handle("a room")
     out = console.export_text()
     assert "syntax error" in out
@@ -358,7 +361,7 @@ def test_reload_after_a_fix_resumes(tmp_path: Path, world_min: WorldDescription)
     assert "Fix these first" in console.export_text()
     assert session.state.pending is None
     assert len(llm.calls) == 0
-    engine._world = fixed  # the user's fix, as the engine now reports it
+    engine.world = fixed  # the user's fix, as the engine now reports it
     repl.handle("/reload")
     repl.handle("a room")
     assert session.state.pending is not None
@@ -374,7 +377,7 @@ def test_link_ops_applied_only_after_y(tmp_path: Path, world_min: WorldDescripti
     plan = json.loads(_load(AREA, "plan.json"))
     plan["link"] = {"room": "hall", "exit": "south", "external_label": "//zones/tutorial:gate"}
     llm = FakeLlm({"logic": [json.dumps(brief), json.dumps(plan)], "prose": _prose()})
-    repl, session, console, _ = _repl(tmp_path, world_min, llm)
+    repl, session, _console, _ = _repl(tmp_path, world_min, llm)
     repl.handle("a mansion south of the gate")
     assert session.state.pending is not None
     assert session.state.pending.link_ops
@@ -393,7 +396,7 @@ def test_link_ops_skipped_on_n(tmp_path: Path, world_min: WorldDescription) -> N
     plan = json.loads(_load(AREA, "plan.json"))
     plan["link"] = {"room": "hall", "exit": "south", "external_label": "//zones/tutorial:gate"}
     llm = FakeLlm({"logic": [json.dumps(brief), json.dumps(plan)], "prose": _prose()})
-    repl, session, console, _ = _repl(tmp_path, world_min, llm)
+    repl, _session, _console, _ = _repl(tmp_path, world_min, llm)
     repl.handle("a mansion south of the gate")
     repl.read_line = lambda _: "n"
     repl.handle("/write")
@@ -411,10 +414,10 @@ def test_hand_edited_builder_test_makes_new_file(
                 _load(AREA, "plan.json"),
                 _load(REFINE, "turn_rewrite_library.json"),
             ],
-            "prose": _prose() + [_load(REFINE, "prose_library.json")],
+            "prose": [*_prose(), _load(REFINE, "prose_library.json")],
         }
     )
-    repl, session, console, _ = _repl(tmp_path, world_min, llm)
+    repl, session, _console, _ = _repl(tmp_path, world_min, llm)
     repl.handle("a medium sized creepy mansion")
     repl.handle("/write")
     pkg = tmp_path / "world" / "zones" / "mansion"
@@ -432,7 +435,7 @@ def test_map_shows_the_rooms(tmp_path: Path, world_mansion: WorldDescription) ->
     for name in ("rooms.star", "items.star"):
         (world_dir / "zones" / "mansion" / name).write_text((MANSION / name).read_text())
     llm = FakeLlm({"logic": []})
-    repl, session, console, _ = _repl(tmp_path, world_mansion, llm)
+    repl, _session, console, _ = _repl(tmp_path, world_mansion, llm)
     repl.handle("/map")
     out = console.export_text()
     assert "hall" in out
@@ -445,7 +448,7 @@ def test_show_prints_the_declaration(tmp_path: Path, world_mansion: WorldDescrip
     for name in ("rooms.star", "items.star"):
         (world_dir / "zones" / "mansion" / name).write_text((MANSION / name).read_text())
     llm = FakeLlm({"logic": []})
-    repl, session, console, _ = _repl(tmp_path, world_mansion, llm)
+    repl, _session, console, _ = _repl(tmp_path, world_mansion, llm)
     repl.handle("/show hall")
     out = console.export_text()
     assert 'room("hall"' in out
@@ -525,7 +528,10 @@ def test_ctrl_c_during_a_model_call_returns_to_the_prompt(
 ) -> None:
     class Interrupted(FakeLlm):
         def complete(
-            self, role: Role, messages: list[Message], json_schema: dict[str, Any] | None
+            self,
+            role: Role,  # noqa: ARG002
+            messages: list[Message],  # noqa: ARG002
+            json_schema: dict[str, Any] | None,  # noqa: ARG002
         ) -> str:
             raise KeyboardInterrupt
 
@@ -545,7 +551,8 @@ def test_ctrl_c_at_the_prompt_does_not_quit(tmp_path: Path, world_min: WorldDesc
             raise KeyboardInterrupt
         if len(lines) == 2:
             raise EOFError
-        raise AssertionError("Ctrl-D should have quit")
+        msg = "Ctrl-D should have quit"
+        raise AssertionError(msg)
 
     repl.read_line = read_line
     assert repl.run() == 0
@@ -616,12 +623,12 @@ def test_undo_restores_a_changed_file_and_the_builder_test_hash(
         _load(REFINE, "turn_lock_study.json"),
         extra_prose=(_load(REFINE, "prose_study_key.json"),),
     )
-    repl, session, console, engine = _repl(tmp_path, world_min, llm)
+    repl, session, _console, engine = _repl(tmp_path, world_min, llm)
     repl.handle("a medium sized creepy mansion")
     # After the write the engine knows the rooms; the REPL asks it right after writing.
     # world_mansion is the refine fixtures' mansion, whose cellar sits under the
     # parlour, so the session's grid follows it.
-    engine._world = world_mansion
+    engine.world = world_mansion
     repl.handle("/write")
     session.state.grid = dict(_REFINE_GRID)
     pkg = tmp_path / "world" / "zones" / "mansion"

@@ -5,14 +5,14 @@ from __future__ import annotations
 import json
 import time
 from dataclasses import asdict, dataclass, replace
+from http import HTTPStatus
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 import httpx
 
-from ..config import Config, RoleConfig
-
 if TYPE_CHECKING:
-    from .log import CallLog
+    from gups_builder.config import Config, RoleConfig
+    from gups_builder.llm.log import CallLog
 
 Role = Literal["logic", "prose"]
 
@@ -74,7 +74,8 @@ class HttpLlm:
         rc = self._config.logic if role == "logic" else self._config.prose
         self.last_fallback = False
         if not rc.model:
-            raise LlmError(f"the {role} model is not configured")
+            msg = f"the {role} model is not configured"
+            raise LlmError(msg)
         headers: dict[str, str] = {}
         if rc.api_key:
             headers["Authorization"] = f"Bearer {rc.api_key}"
@@ -107,6 +108,7 @@ class HttpLlm:
         messages: list[Message],
         json_schema: dict[str, Any] | None,
         headers: dict[str, str],
+        *,
         force_json_object: bool = False,
     ) -> tuple[str, str | None]:
         payload: dict[str, Any] = {
@@ -132,24 +134,26 @@ class HttpLlm:
                 timeout=rc.timeout_s,
             )
         except httpx.HTTPError as error:
-            raise LlmError(f"{role} request to {rc.base_url} failed: {error}") from error
+            msg = f"{role} request to {rc.base_url} failed: {error}"
+            raise LlmError(msg) from error
         if (
-            response.status_code == 400
+            response.status_code == HTTPStatus.BAD_REQUEST
             and not force_json_object
             and payload.get("response_format", {}).get("type") == "json_schema"
         ):
             return "", _SCHEMA_REFUSED
-        if response.status_code != 200:
-            raise LlmError(
+        if response.status_code != HTTPStatus.OK:
+            msg = (
                 f"{role} request to {rc.base_url} got HTTP {response.status_code}: "
                 f"{response.text[:200]}"
             )
+            raise LlmError(msg)
         try:
             content = response.json()["choices"][0]["message"]["content"]
         except (ValueError, KeyError, IndexError, TypeError) as error:
-            raise LlmError(
-                f"{role} request to {rc.base_url} got an unusable reply: {response.text[:200]}"
-            ) from error
+            msg = f"{role} request to {rc.base_url} got an unusable reply: {response.text[:200]}"
+            raise LlmError(msg) from error
         if not isinstance(content, str):
-            raise LlmError(f"{role} request to {rc.base_url} got a reply with no text content")
+            msg = f"{role} request to {rc.base_url} got a reply with no text content"
+            raise LlmError(msg)
         return content, None

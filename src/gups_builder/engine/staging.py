@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import shutil
 import tempfile
-from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 # Not world content: build artifacts, builder state and one-off test databases.
 _SKIP_DIRS = frozenset({".git", ".gups", ".builder", "local-world-test"})

@@ -9,19 +9,22 @@ the same turn added.
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Annotated, Literal, TypeGuard
+from typing import TYPE_CHECKING, Annotated, Literal, TypeGuard
 
 from pydantic import BaseModel, Field
 
-from gups_builder.engine.api import ApiEntry
-from gups_builder.engine.world import WorldDescription
 from gups_builder.grid.place import room_id
-from gups_builder.modes.area_checks import ItemProse
 from gups_builder.modes.common import Context, Turn, param_allowed
-from gups_builder.star.reader import DeclView
 from gups_builder.star.values import Value, is_editable
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from gups_builder.engine.api import ApiEntry
+    from gups_builder.engine.world import WorldDescription
+    from gups_builder.modes.area_checks import ItemProse
+    from gups_builder.star.reader import DeclView
 
 _ID = re.compile(r"[a-z][a-z0-9_]*")
 
@@ -124,7 +127,7 @@ MobEdit = Annotated[
 
 
 class MobTurn(Turn):
-    edits: list[MobEdit] = []
+    edits: list[MobEdit] = Field(default_factory=list)
 
 
 # -- labels ----------------------------------------------------------------------
@@ -183,6 +186,11 @@ def room_ids(ctx: Context) -> set[str]:
 # -- prose -----------------------------------------------------------------------
 
 
+_MAX_NAME_LEN = 60
+_MAX_LOOT_CHANCE = 100
+_MAX_PROFICIENCY = 100
+
+
 def prose_check(what: str) -> Callable[[MobProse | ItemProse], list[str]]:
     def check(prose: MobProse | ItemProse) -> list[str]:
         problems: list[str] = []
@@ -190,8 +198,10 @@ def prose_check(what: str) -> Callable[[MobProse | ItemProse], list[str]]:
             problems.append(f"{what}: name is empty")
         if "\n" in prose.name:
             problems.append(f"{what}: name must be one line")
-        if len(prose.name) > 60:
-            problems.append(f"{what}: name is {len(prose.name)} characters, the limit is 60")
+        if len(prose.name) > _MAX_NAME_LEN:
+            problems.append(
+                f"{what}: name is {len(prose.name)} characters, the limit is {_MAX_NAME_LEN}"
+            )
         if not prose.desc.strip():
             problems.append(f"{what}: desc is empty")
         if "\n" in prose.desc:
@@ -261,8 +271,10 @@ def _loot_item_problems(
 def loot_problems(ctx: Context, loot: LootSpec, taken: set[str], plan_mobs: set[str]) -> list[str]:
     """Problems with one loot entry; ``taken`` holds the ids a new item may not use."""
     problems = _loot_item_problems(ctx, loot, taken, plan_mobs)
-    if not 1 <= loot.chance <= 100:
-        problems.append(f"the loot chance {loot.chance} for '{loot.item}' is outside 1-100")
+    if not 1 <= loot.chance <= _MAX_LOOT_CHANCE:
+        problems.append(
+            f"the loot chance {loot.chance} for '{loot.item}' is outside 1-{_MAX_LOOT_CHANCE}"
+        )
     return problems
 
 
@@ -343,11 +355,11 @@ def _known_skill_problems(ctx: Context, mob: PlannedMob) -> list[str]:
     ]
 
 
-def _proficiency_problems(ctx: Context, mob: PlannedMob) -> list[str]:
+def _proficiency_problems(_ctx: Context, mob: PlannedMob) -> list[str]:
     return [
         f"the proficiency {prof} for '{label}' is outside 0-100"
         for label, prof in mob.skills.items()
-        if not 0 <= prof <= 100
+        if not 0 <= prof <= _MAX_PROFICIENCY
     ]
 
 
@@ -462,7 +474,7 @@ def _int_kwargs(value: Value, callee: str) -> dict[str, int] | None:
 
 def _int_pair(pair: Value) -> tuple[str, int] | None:
     """A ``[key, <int>]`` pair of a ``$dict``, or None for any other shape."""
-    if not isinstance(pair, list) or len(pair) != 2:
+    if not isinstance(pair, list) or len(pair) != 2:  # noqa: PLR2004
         return None
     key, number = pair
     if isinstance(key, str) and _is_whole_number(number):
@@ -499,7 +511,7 @@ def _behavior_spec(item: Value) -> BehaviorSpec | None:
 _Shaped = tuple[object | None, list[str]]
 
 
-def _level_shape(name: str, value: Value) -> _Shaped:
+def _level_shape(_name: str, value: Value) -> _Shaped:
     if _is_whole_number(value):
         return value, []
     return None, ["the mob field 'level' must be a whole number"]
@@ -519,14 +531,14 @@ def _dict_shape(name: str, value: Value) -> _Shaped:
     return numbers, []
 
 
-def _behaviors_shape(name: str, value: Value) -> _Shaped:
+def _behaviors_shape(_name: str, value: Value) -> _Shaped:
     if not isinstance(value, list):
         return None, []
     specs = [_behavior_spec(item) for item in value]
     return [s for s in specs if s is not None], []
 
 
-def _strings_shape(name: str, value: Value) -> _Shaped:
+def _strings_shape(_name: str, value: Value) -> _Shaped:
     if not isinstance(value, list):
         return None, []
     return [v for v in value if isinstance(v, str)], []

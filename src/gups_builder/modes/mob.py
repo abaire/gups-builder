@@ -13,14 +13,12 @@ from __future__ import annotations
 import json
 import statistics
 import tempfile
-from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel
 
-from gups_builder.engine.api import ApiModel
-from gups_builder.engine.world import MobInfo
 from gups_builder.grid.place import room_id
 from gups_builder.llm.client import Message
 from gups_builder.llm.structured import call_structured
@@ -67,6 +65,12 @@ from gups_builder.star.ops import (
 from gups_builder.star.reader import DeclView, read_package
 from gups_builder.star.values import Value, is_editable
 from gups_builder.star.writer import apply_ops
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterable
+
+    from gups_builder.engine.api import ApiModel
+    from gups_builder.engine.world import MobInfo
 
 
 class MobBrief(BaseModel):
@@ -455,9 +459,12 @@ def _mob_args(ctx: Context, mob: PlannedMob, prose: MobProse) -> dict[str, Value
     return {name: value for name, value in candidates if value is not None}
 
 
+_DEFAULT_LOOT_CHANCE = 100
+
+
 def _loot_value(ctx: Context, loot: LootSpec) -> Value:
     kwargs: dict[str, Value] = {}
-    if loot.chance != 100:
+    if loot.chance != _DEFAULT_LOOT_CHANCE:
         kwargs["chance"] = loot.chance
     return {"$call": "loot", "args": [_short_label(loot.item, ctx.package)], "kwargs": kwargs}
 
@@ -516,7 +523,7 @@ def _dict_text(pairs: Value) -> str:
     inner = ", ".join(
         f"{_value_text(pair[0])}: {_value_text(pair[1])}"
         for pair in pairs
-        if isinstance(pair, list) and len(pair) == 2
+        if isinstance(pair, list) and len(pair) == 2  # noqa: PLR2004
     )
     return "{" + inner + "}"
 

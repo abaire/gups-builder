@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from .client import Message, Role
+if TYPE_CHECKING:
+    from gups_builder.llm.client import Message, Role
 
 
 class FakeLlm:
@@ -19,5 +20,6 @@ class FakeLlm:
     ) -> str:
         self.calls.append((role, list(messages), json_schema))
         if not self.replies.get(role):
-            raise AssertionError(f"{role} ran out of scripted replies")
+            msg = f"{role} ran out of scripted replies"
+            raise AssertionError(msg)
         return self.replies[role].pop(0)

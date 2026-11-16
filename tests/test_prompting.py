@@ -11,11 +11,12 @@ def test_load_prompt_substitutes_fields() -> None:
     text = load_prompt("repair_lint", problems="rooms.star:3: unexpected token", previous="{}")
     assert "rooms.star:3: unexpected token" in text
     assert "{}" in text
-    assert "{problems}" not in text and "{previous}" not in text
+    assert "{problems}" not in text
+    assert "{previous}" not in text
 
 
 def test_load_prompt_missing_field_is_an_error() -> None:
-    with pytest.raises(ValueError, match="missing the field 'previous'$"):
+    with pytest.raises(ValueError, match=r"missing the field 'previous'$"):
         load_prompt("repair_lint", problems="p")
 
 

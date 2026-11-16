@@ -12,15 +12,13 @@ from __future__ import annotations
 
 import json
 import tempfile
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel
 
-from gups_builder.engine.world import DoorInfo, ExitInfo, RoomInfo
 from gups_builder.grid.derive import DIRECTION_DELTAS, OPPOSITES, derive_exits
-from gups_builder.grid.model import Coord, DerivedExit, DoorSpec, Grid
 from gups_builder.grid.place import place_existing, room_id
 from gups_builder.llm.client import Message
 from gups_builder.llm.structured import call_structured
@@ -79,6 +77,12 @@ from gups_builder.star.reader import DeclView, read_package
 from gups_builder.star.render import render_string
 from gups_builder.star.values import Value, is_editable
 from gups_builder.star.writer import apply_ops
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from gups_builder.engine.world import DoorInfo, ExitInfo, RoomInfo
+    from gups_builder.grid.model import Coord, DerivedExit, DoorSpec, Grid
 
 # The mode's entry points, and the plan and turn shapes its callers name.
 __all__ = ["AreaBrief", "AreaPlan", "AreaTurn", "area_turn", "create_area", "plan_to_grid"]
@@ -170,8 +174,8 @@ def _existing_ids(ctx: Context) -> str:
 
 def _exits_by_room(grid: Grid) -> dict[str, list[DerivedExit]]:
     by_room: dict[str, list[DerivedExit]] = {}
-    for exit in derive_exits(grid):
-        by_room.setdefault(exit.room, []).append(exit)
+    for derived_exit in derive_exits(grid):
+        by_room.setdefault(derived_exit.room, []).append(derived_exit)
     return by_room
 
 
@@ -258,7 +262,7 @@ def _room_decls(
         exits = [_exit_value(e, planned) for e in exits_by_room.get(room.id, [])]
         if link is not None and link.room == room.id:
             exits.append(_link_exit(link.exit, link.external_label))
-        args = _room_args(room, state.prose[room.id], exits, size_ok)
+        args = _room_args(room, state.prose[room.id], exits, size_ok=size_ok)
         ops.append(AddDecl(file="rooms.star", kind="room", id=room.id, args=args))
     return ops
 
@@ -653,7 +657,7 @@ def _neighbours_text(exits: list[DerivedExit], names: dict[str, str]) -> str:
 
 
 def _room_args(
-    room: PlannedRoom | AddRoom, prose: RoomProse, exits: list[Value], size_ok: bool
+    room: PlannedRoom | AddRoom, prose: RoomProse, exits: list[Value], *, size_ok: bool
 ) -> dict[str, Value]:
     args: dict[str, Value] = {"name": prose.name, "desc": prose.desc}
     if size_ok and room.size != "normal":
@@ -803,7 +807,7 @@ def _add_room_ops(ctx: Context, build: _TurnBuild, edit: AddRoom) -> list[StarOp
     room_exits = build.exits_after.get(edit.id, [])
     prose = _new_room_prose(ctx, edit, _neighbours_text(room_exits, build.names))
     exits = [_exit_value(e, build.room_ids) for e in room_exits]
-    args = _room_args(edit, prose, exits, build.size_ok)
+    args = _room_args(edit, prose, exits, size_ok=build.size_ok)
     build.new_coords[edit.id] = (edit.at.x, edit.at.y, edit.at.z)
     build.preview.extend(_preview(edit.id, prose))
     return [AddDecl(file="rooms.star", kind="room", id=edit.id, args=args)]

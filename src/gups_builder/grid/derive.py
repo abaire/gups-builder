@@ -9,9 +9,12 @@ rooms, so the model can repair its plan.
 from __future__ import annotations
 
 from collections import Counter, deque
-from collections.abc import Mapping
+from typing import TYPE_CHECKING
 
-from .model import Connection, Coord, DerivedExit, DoorSpec, Grid, GridRoom, Portal
+from gups_builder.grid.model import Connection, Coord, DerivedExit, DoorSpec, Grid, GridRoom, Portal
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 DIRECTION_DELTAS: dict[str, Coord] = {
     "north": (0, 1, 0),
@@ -302,14 +305,12 @@ def _joined_by_connection(room_id: str, grid: Grid) -> bool:
 
 
 def _portals_without_return(grid: Grid) -> list[str]:
-    problems: list[str] = []
-    for portal in grid.portals:
-        if _missing_return(portal):
-            problems.append(
-                f"the portal from '{portal.a}' has the non-standard exit '{portal.a_exit}' "
-                "and no return exit"
-            )
-    return problems
+    return [
+        f"the portal from '{portal.a}' has the non-standard exit '{portal.a_exit}' "
+        "and no return exit"
+        for portal in grid.portals
+        if _missing_return(portal)
+    ]
 
 
 def _missing_return(portal: Portal) -> bool:

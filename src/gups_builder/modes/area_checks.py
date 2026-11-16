@@ -9,17 +9,20 @@ own, checked in order so an edit may name a room an earlier edit added.
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Iterable
 from dataclasses import dataclass
-from typing import Annotated, Literal
+from typing import TYPE_CHECKING, Annotated, Literal
 
 from pydantic import BaseModel, Field
 
-from gups_builder.engine.world import DoorInfo, ExitInfo, RoomInfo
 from gups_builder.grid.derive import DIRECTION_DELTAS, OPPOSITES, validate
 from gups_builder.grid.model import Connection, Coord, DoorSpec, Grid, GridRoom, Portal
 from gups_builder.grid.place import room_id
 from gups_builder.modes.common import Context, Turn, allowed_values, param_allowed
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterable
+
+    from gups_builder.engine.world import DoorInfo, ExitInfo, RoomInfo
 
 
 class XYZ(BaseModel):
@@ -186,7 +189,7 @@ AreaEdit = Annotated[
 
 
 class AreaTurn(Turn):
-    edits: list[AreaEdit] = []
+    edits: list[AreaEdit] = Field(default_factory=list)
 
 
 _ID = re.compile(r"[a-z][a-z0-9_]*")
@@ -338,6 +341,9 @@ def _link_problems(ctx: Context, plan: AreaPlan, link: PlannedLink) -> list[str]
 # -- prose -----------------------------------------------------------------------
 
 
+_MAX_NAME_LEN = 60
+
+
 def prose_check(what: str) -> Callable[[RoomProse], list[str]]:
     def check(prose: RoomProse) -> list[str]:
         problems: list[str] = []
@@ -345,8 +351,10 @@ def prose_check(what: str) -> Callable[[RoomProse], list[str]]:
             problems.append(f"{what}: name is empty")
         if "\n" in prose.name:
             problems.append(f"{what}: name must be one line")
-        if len(prose.name) > 60:
-            problems.append(f"{what}: name is {len(prose.name)} characters, the limit is 60")
+        if len(prose.name) > _MAX_NAME_LEN:
+            problems.append(
+                f"{what}: name is {len(prose.name)} characters, the limit is {_MAX_NAME_LEN}"
+            )
         if not prose.desc.strip():
             problems.append(f"{what}: desc is empty")
         if "\n" in prose.desc:
@@ -377,12 +385,12 @@ def _door_spec(door: DoorInfo | None) -> DoorSpec | None:
     )
 
 
-def _passage(package: str, rid: str, exit: ExitInfo) -> Connection | None:
+def _passage(package: str, rid: str, room_exit: ExitInfo) -> Connection | None:
     """A standard-direction exit to another room of the package, as a connection."""
-    target = local_id(exit.to, package)
-    if exit.dir not in DIRECTION_DELTAS or target is None:
+    target = local_id(room_exit.to, package)
+    if room_exit.dir not in DIRECTION_DELTAS or target is None:
         return None
-    return Connection(a=rid, b=target, door=_door_spec(exit.door))
+    return Connection(a=rid, b=target, door=_door_spec(room_exit.door))
 
 
 def _passages(package: str, room: RoomInfo) -> list[Connection]:

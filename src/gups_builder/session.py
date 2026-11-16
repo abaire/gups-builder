@@ -12,12 +12,14 @@ from __future__ import annotations
 import os
 import tempfile
 from datetime import UTC, datetime
-from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel
 
-from gups_builder.star.ops import StarOp
+from gups_builder.star.ops import StarOp  # noqa: TC001
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 Mode = Literal["area", "mob", "skill"]
 

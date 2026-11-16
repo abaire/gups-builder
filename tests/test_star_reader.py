@@ -210,7 +210,8 @@ def test_tutorial_room_gate_commands_are_refs() -> None:
     assert gate is not None
     commands = _as_dict(gate.args["commands"])
     pairs = commands["$dict"]
-    assert isinstance(pairs, list) and pairs == [["read", {"$ref": "_read"}]]
+    assert isinstance(pairs, list)
+    assert pairs == [["read", {"$ref": "_read"}]]
     assert not is_editable(gate.args["commands"])
 
 
@@ -235,7 +236,8 @@ def test_tutorial_mob() -> None:
     assert is_editable(behaviors[0])
     senses = _as_dict(guide.args["senses"])
     pairs = senses["$dict"]
-    assert isinstance(pairs, list) and pairs == [["sound", 1]]
+    assert isinstance(pairs, list)
+    assert pairs == [["sound", 1]]
 
 
 def test_tutorial_item_nested_calls() -> None:

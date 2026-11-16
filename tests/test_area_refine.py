@@ -9,14 +9,13 @@ the new room's coordinate is recorded for the next turn.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
-from conftest import FakeEngine, PackageState, build_context, load_api, read_fixture
 
 from gups_builder.config import Config
 from gups_builder.engine.gups import Gups
 from gups_builder.engine.lint import LintFinding
-from gups_builder.engine.world import WorldDescription
 from gups_builder.llm.fake import FakeLlm
 from gups_builder.modes.area import AreaTurn, area_turn
 from gups_builder.modes.common import Context
@@ -29,6 +28,10 @@ from gups_builder.star.ops import (
     SetArg,
 )
 from gups_builder.star.reader import read_package
+from tests.conftest import FakeEngine, PackageState, build_context, load_api, read_fixture
+
+if TYPE_CHECKING:
+    from gups_builder.engine.world import WorldDescription
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "llm" / "area_refine"
 MANSION = Path(__file__).resolve().parent / "fixtures" / "mansion"
@@ -233,7 +236,7 @@ def test_connect_onto_a_one_way_exit_adds_only_the_missing_side(
     # The vault already has its exit east to the hall; only the hall's way back is new.
     llm = FakeLlm({"logic": [_load("turn_connect_vault.json")]})
     ctx, _ = _ctx(tmp_path, llm, world_mansion)
-    turn, proposal = area_turn(ctx, dict(GRID), "connect the vault to the hall", [])
+    _turn, proposal = area_turn(ctx, dict(GRID), "connect the vault to the hall", [])
     assert proposal is not None
     exit_ops = [op for op in proposal.ops if isinstance(op, (RemoveItem, AppendItem))]
     assert [(type(op).__name__, op.id) for op in exit_ops] == [("AppendItem", "hall")]
@@ -246,7 +249,7 @@ def test_connect_with_the_door_already_there_changes_nothing(
     # The kitchen door's key is a full label in describe-world and a bare id in the edit.
     llm = FakeLlm({"logic": [_load("turn_reconnect_kitchen.json")]})
     ctx, _ = _ctx(tmp_path, llm, world_mansion)
-    turn, proposal = area_turn(ctx, dict(GRID), "lock the kitchen with the silver key", [])
+    _turn, proposal = area_turn(ctx, dict(GRID), "lock the kitchen with the silver key", [])
     assert proposal is not None
     assert proposal.ops == []
 
@@ -295,7 +298,7 @@ def test_spawns_use_the_package_label_form_in_the_file(
 ) -> None:
     llm = FakeLlm({"logic": [_load("turn_spawns.json")]})
     ctx, _ = _ctx(tmp_path, llm, world_mansion)
-    turn, proposal = area_turn(ctx, dict(GRID), "move the ghost to the hall", [])
+    _turn, proposal = area_turn(ctx, dict(GRID), "move the ghost to the hall", [])
     assert proposal is not None
     add = next(op for op in proposal.ops if isinstance(op, AppendItem) and op.name == "spawns")
     assert add.id == "hall"
@@ -409,9 +412,7 @@ def test_untouched_rooms_keep_their_coordinates_across_two_turns(
 
 
 @pytest.mark.engine
-def test_a_refined_room_passes_the_real_engine(
-    tmp_path: Path, gups_bin: Path, template_world: Path
-) -> None:
+def test_a_refined_room_passes_the_real_engine(gups_bin: Path, template_world: Path) -> None:
     # A prose rewrite of the template world's tutorial hall is staged and run
     # through the real engine; the opaque fields of that room stay untouched.
     gups = Gups(gups_bin, template_world)

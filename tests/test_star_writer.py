@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -20,8 +21,10 @@ from gups_builder.star.ops import (
 )
 from gups_builder.star.reader import PackageView, read_package
 from gups_builder.star.render import render_decl, render_value
-from gups_builder.star.values import Value
 from gups_builder.star.writer import apply_ops
+
+if TYPE_CHECKING:
+    from gups_builder.star.values import Value
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 TUTORIAL = FIXTURES / "tutorial"
@@ -356,7 +359,8 @@ def test_round_trip_read_package(tmp_path: Path) -> None:
         (tmp_path / name).write_text(text)
     view2 = read_package(tmp_path, "zones/tutorial")
     hall = view2.get("room", "hall")
-    assert hall is not None and hall.args["size"] == {"$const": "SIZE.normal"}
+    assert hall is not None
+    assert hall.args["size"] == {"$const": "SIZE.normal"}
     gate = view2.get("room", "gate")
     assert gate is not None
     directions = [_first_arg(item) for item in _as_list(gate.args["exits"])]
@@ -468,10 +472,10 @@ def test_render_decl_comment_and_no_args() -> None:
 
 
 def test_render_string_non_ascii_is_literal() -> None:
-    text = render_decl("room", "r", {"desc": "The door creaks — the hall’s light gutters."}, None)
-    assert "The door creaks — the hall’s light gutters." in text
+    text = render_decl("room", "r", {"desc": "The door creaks — the hall's light gutters."}, None)
+    assert "The door creaks — the hall's light gutters." in text
     assert "\\u" not in text
-    assert render_value("A — b’s c", 0) == '"A — b’s c"'
+    assert render_value("A — b's c", 0) == '"A — b\'s c"'
 
 
 def test_render_string_escaping() -> None:

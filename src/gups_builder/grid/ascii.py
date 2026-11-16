@@ -13,9 +13,12 @@ cell's centre, and ``/`` and ``\\`` the diagonals in the row between, with an
 from __future__ import annotations
 
 import string
+from typing import TYPE_CHECKING
 
-from .derive import derive_exits
-from .model import Grid
+from gups_builder.grid.derive import derive_exits
+
+if TYPE_CHECKING:
+    from gups_builder.grid.model import Grid
 
 _BLOCK = 7  # cell (3) + marker columns (3) + a connector column that markers never use
 _MARKERS = {"up": (3, "^"), "down": (4, "v")}
@@ -46,7 +49,7 @@ def render_map(grid: Grid, z: int, names: dict[str, str]) -> str:
     rows = 2 * (max_y - min_y) + 1
     cols = _BLOCK * (max_x - min_x + 1)
     cells: list[list[str]] = [[" "] * cols for _ in range(rows)]
-    by_id = {rid: coord for rid, coord in placed}
+    by_id = dict(placed)
     letters = {rid: _code(i) for i, (rid, _) in enumerate(placed)}
 
     def row_of(y: int) -> int:

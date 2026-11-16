@@ -9,14 +9,17 @@ from __future__ import annotations
 
 import ast
 import hashlib
-from collections.abc import Mapping
 from dataclasses import dataclass
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import libcst as cst
 from libcst.metadata import CodeRange, MetadataWrapper, PositionProvider
 
 from gups_builder.star.values import Value, to_value
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+    from pathlib import Path
 
 DECLARATION_KINDS = frozenset({"room", "mob", "item", "skill", "faction", "region", "container"})
 
@@ -60,9 +63,9 @@ class PackageView:
     decls: list[DeclView]
     opaque: list[OpaqueDecl]
 
-    def get(self, kind: str, id: str) -> DeclView | None:
+    def get(self, kind: str, decl_id: str) -> DeclView | None:
         for decl in self.decls:
-            if decl.kind == kind and decl.id == id:
+            if decl.kind == kind and decl.id == decl_id:
                 return decl
         return None
 
@@ -134,7 +137,7 @@ def _top_level_decl(
 ) -> DeclView | OpaqueDecl:
     """A top-level declaration call, or an opaque decl when its id is not a string literal."""
     func = call.func
-    assert isinstance(func, cst.Name), "the collector only gathers declaration-kind name calls"
+    assert isinstance(func, cst.Name), "the collector only gathers declaration-kind name calls"  # noqa: S101
     decl_id = _first_literal_id(call)
     if decl_id is None:
         return OpaqueDecl(
@@ -212,7 +215,7 @@ class _CallCollector(cst.CSTVisitor):
     def __init__(self) -> None:
         self.calls: list[cst.Call] = []
 
-    def visit_Call(self, node: cst.Call) -> None:
+    def visit_Call(self, node: cst.Call) -> None:  # noqa: N802
         if isinstance(node.func, cst.Name) and node.func.value in DECLARATION_KINDS:
             self.calls.append(node)
 
@@ -230,5 +233,5 @@ def _first_literal_id(call: cst.Call) -> str | None:
     if not source or source[0].isalpha():
         return None
     decoded = ast.literal_eval(source)
-    assert isinstance(decoded, str)
+    assert isinstance(decoded, str)  # noqa: S101
     return decoded

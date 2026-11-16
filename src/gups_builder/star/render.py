@@ -13,8 +13,10 @@ from __future__ import annotations
 import keyword
 import math
 import re
+from typing import TYPE_CHECKING
 
-from gups_builder.star.values import Value
+if TYPE_CHECKING:
+    from gups_builder.star.values import Value
 
 LINE_LIMIT = 80
 
@@ -25,7 +27,8 @@ _CONST = re.compile(r"[A-Z_][A-Z0-9_]*\.[A-Za-z_][A-Za-z0-9_]*")
 def _identifier(name: object) -> str:
     """The name, when it can stand as a callee or keyword; ValueError otherwise."""
     if not isinstance(name, str) or not name.isidentifier() or keyword.iskeyword(name):
-        raise ValueError(f"not a Starlark identifier: {name!r}")
+        msg = f"not a Starlark identifier: {name!r}"
+        raise ValueError(msg)
     return name
 
 
@@ -52,7 +55,8 @@ def render_value(value: Value, indent: int) -> str:
     if value is False:
         return "False"
     if isinstance(value, float) and not math.isfinite(value):
-        raise ValueError(f"{value!r} has no Starlark literal")
+        msg = f"{value!r} has no Starlark literal"
+        raise ValueError(msg)
     if isinstance(value, (int, float)):
         return repr(value)
     if isinstance(value, str):
@@ -63,19 +67,24 @@ def render_value(value: Value, indent: int) -> str:
         if "$const" in value:
             const = value["$const"]
             if not isinstance(const, str) or not _CONST.fullmatch(const):
-                raise ValueError(f"not a constant: {const!r}")
+                msg = f"not a constant: {const!r}"
+                raise ValueError(msg)
             return const
         if "$dict" in value:
             pairs = value["$dict"]
             if not isinstance(pairs, list):
-                raise ValueError(f"not a Value: {value!r}")
+                msg = f"not a Value: {value!r}"
+                raise ValueError(msg)
             return _render_dict(pairs, indent)
         if "$call" in value:
             return _render_call(value, indent)
         if "$ref" in value or "$opaque" in value:
-            raise ValueError("a $ref or $opaque value cannot be written")
-        raise ValueError(f"not a Value: {value!r}")
-    raise ValueError(f"not a Value: {value!r}")
+            msg = "a $ref or $opaque value cannot be written"
+            raise ValueError(msg)
+        msg = f"not a Value: {value!r}"
+        raise ValueError(msg)
+    msg = f"not a Value: {value!r}"
+    raise ValueError(msg)
 
 
 def _is_call(value: Value) -> bool:
@@ -84,7 +93,7 @@ def _is_call(value: Value) -> bool:
 
 def _list_multiline(items: list[Value], indent: int) -> bool:
     oneline = "[" + ", ".join(render_value(item, indent + 4) for item in items) + "]"
-    return sum(1 for item in items if _is_call(item)) >= 2 or len(oneline) > LINE_LIMIT
+    return sum(1 for item in items if _is_call(item)) >= 2 or len(oneline) > LINE_LIMIT  # noqa: PLR2004
 
 
 def _render_list(items: list[Value], indent: int) -> str:
@@ -101,8 +110,9 @@ def _render_list(items: list[Value], indent: int) -> str:
 def _render_dict(pairs: list[Value], indent: int) -> str:
     parts = []
     for pair in pairs:
-        if not isinstance(pair, list) or len(pair) != 2:
-            raise ValueError(f"not a key/value pair: {pair!r}")
+        if not isinstance(pair, list) or len(pair) != 2:  # noqa: PLR2004
+            msg = f"not a key/value pair: {pair!r}"
+            raise ValueError(msg)
         key, value = pair
         parts.append(render_value(key, indent) + ": " + render_value(value, indent))
     return "{" + ", ".join(parts) + "}"
@@ -111,7 +121,8 @@ def _render_dict(pairs: list[Value], indent: int) -> str:
 def _callee(name: object) -> str:
     """A callee name: an identifier, or a plugin primitive's dotted builtin name."""
     if not isinstance(name, str):
-        raise ValueError(f"not a Starlark identifier: {name!r}")
+        msg = f"not a Starlark identifier: {name!r}"
+        raise TypeError(msg)
     for segment in name.split("."):
         _identifier(segment)
     return name
@@ -122,7 +133,8 @@ def _render_call(value: dict[str, Value], indent: int) -> str:
     args = value.get("args", [])
     kwargs = value.get("kwargs", {})
     if not isinstance(args, list) or not isinstance(kwargs, dict):
-        raise ValueError(f"not a Value: {value!r}")
+        msg = f"not a Value: {value!r}"
+        raise TypeError(msg)
     rendered = [render_value(arg, indent + 4) for arg in args]
     rendered += [
         _identifier(key) + " = " + render_value(item, indent + 4) for key, item in kwargs.items()
@@ -144,15 +156,15 @@ def comment_lines(text: str, first: str, rest: str) -> list[str]:
     return [((first if i == 0 else rest) + line).rstrip() for i, line in enumerate(lines)]
 
 
-def render_decl(kind: str, id: str, args: dict[str, Value], comment: str | None) -> str:
+def render_decl(kind: str, decl_id: str, args: dict[str, Value], comment: str | None) -> str:
     """A new declaration, ending in a newline, in the template's style."""
     lines = []
     if comment is not None:
         lines += comment_lines(comment, "# ", "# ")
     if not args:
-        lines.append(f"{kind}({render_string(id)})")
+        lines.append(f"{kind}({render_string(decl_id)})")
     else:
-        lines.append(f"{kind}({render_string(id)},")
+        lines.append(f"{kind}({render_string(decl_id)},")
         lines += [f"    {name} = {render_value(value, 4)}," for name, value in args.items()]
         lines.append(")")
     return "\n".join(lines) + "\n"

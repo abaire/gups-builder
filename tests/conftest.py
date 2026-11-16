@@ -6,17 +6,20 @@ import os
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
 from gups_builder.config import Config
 from gups_builder.engine.api import ApiModel
 from gups_builder.engine.gups import EngineError, Gups, TestRun
-from gups_builder.engine.lint import LintFinding
 from gups_builder.engine.world import WorldDescription
-from gups_builder.llm.fake import FakeLlm
 from gups_builder.modes.common import Context
 from gups_builder.star.reader import PackageView
+
+if TYPE_CHECKING:
+    from gups_builder.engine.lint import LintFinding
+    from gups_builder.llm.fake import FakeLlm
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -44,16 +47,16 @@ class FakeEngine:
         self._lint = list(lint or [])
         self.test_calls = 0
 
-    def describe_world(self, world: Path | None = None) -> WorldDescription:
+    def describe_world(self, world: Path | None = None) -> WorldDescription:  # noqa: ARG002
         return self._world
 
     def api(self) -> ApiModel:
         return self._api
 
-    def lint(self, package: str, world: Path | None = None) -> list[LintFinding]:
+    def lint(self, package: str, world: Path | None = None) -> list[LintFinding]:  # noqa: ARG002
         return self._lint.pop(0) if self._lint else []
 
-    def test(self, package: str, world: Path | None = None) -> TestRun:
+    def test(self, package: str, world: Path | None = None) -> TestRun:  # noqa: ARG002
         self.test_calls += 1
         return TestRun(ok=True, output="")
 
@@ -110,7 +113,7 @@ def template_world(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return _copy_template_world(tmp_path_factory.mktemp("template-world") / "world")
 
 
-@pytest.fixture()
+@pytest.fixture
 def fresh_template_world(tmp_path: Path) -> Path:
     """A world copy alone for a test that rewrites a package another engine test creates.
 

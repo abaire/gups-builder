@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ValidationError
 
-from .client import LlmClient, Message, Role
+from gups_builder.llm.client import LlmClient, Message, Role
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 _FENCE = re.compile(r"^\s*```[a-zA-Z0-9_-]*\s*\n(.*?)\n```\s*$", re.DOTALL)
 
@@ -17,7 +20,7 @@ def _strip_fence(reply: str) -> str:
     return match.group(1) if match else reply
 
 
-class StructuredCallFailed(Exception):
+class StructuredCallError(Exception):
     """Every attempt of a structured call failed; `attempts` and `errors` explain why."""
 
     def __init__(self, attempts: list[str], errors: list[str]) -> None:
@@ -61,13 +64,14 @@ def call_structured[T: BaseModel](
         parsed, error = _try_parse(reply, model, extra_check)
         if parsed is not None:
             return parsed
-        assert error is not None
+        assert error is not None  # noqa: S101
         errors.append(error)
-        history = history + [
+        history = [
+            *history,
             Message("assistant", reply),
             Message(
                 "user",
                 f"That reply was not valid:\n{error}\nReply again with the corrected JSON only.",
             ),
         ]
-    raise StructuredCallFailed(attempts, errors)
+    raise StructuredCallError(attempts, errors)

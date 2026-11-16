@@ -99,14 +99,12 @@ def test_parse_github_warning_and_escapes() -> None:
 
 
 def test_parse_github_ignores_other_lines() -> None:
-    output = "\n".join(
-        [
-            "::group=Loading",
-            "0 errors, 1 warning",
-            "::error file=x.star,line=1,title=something else::not ours",
-            "",
-            "::warning file=y.star,title=gups lint::kept",
-        ]
+    output = (
+        "::group=Loading\n"
+        "0 errors, 1 warning\n"
+        "::error file=x.star,line=1,title=something else::not ours\n"
+        "\n"
+        "::warning file=y.star,title=gups lint::kept"
     )
     [finding] = parse_github(output)
     assert finding.file == "y.star"

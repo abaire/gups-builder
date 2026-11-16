@@ -5,9 +5,12 @@ from __future__ import annotations
 import json
 from dataclasses import asdict
 from datetime import UTC, datetime
-from pathlib import Path
+from typing import TYPE_CHECKING
 
-from .client import Message, Role
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from gups_builder.llm.client import Message, Role
 
 
 class CallLog:

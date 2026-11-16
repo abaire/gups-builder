@@ -1,22 +1,28 @@
 """Argument parsing and the subcommands of gups-builder."""
+# ruff: noqa: T201
 
 from __future__ import annotations
 
 import argparse
 import os
 import time
-from collections.abc import Callable
 from pathlib import Path
+from typing import TYPE_CHECKING
 
+from prompt_toolkit import PromptSession
+from prompt_toolkit.history import FileHistory
 from pydantic import BaseModel, ValidationError
 from rich.console import Console
 
-from .config import Config, RoleConfig, load_config
-from .engine.gups import EngineError, Gups
-from .llm.client import HttpLlm, LlmError, Message
-from .llm.log import CallLog
-from .repl import Repl, context_factory
-from .session import Mode, Session, SessionState
+from gups_builder.config import Config, RoleConfig, load_config
+from gups_builder.engine.gups import EngineError, Gups
+from gups_builder.llm.client import HttpLlm, LlmError, Message
+from gups_builder.llm.log import CallLog
+from gups_builder.repl import Repl, context_factory
+from gups_builder.session import Mode, Session, SessionState
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 _CLI_FLAGS = ("logic_url", "logic_model", "prose_url", "prose_model", "gups")
 
@@ -75,7 +81,7 @@ def _run_models(args: argparse.Namespace) -> int:
         started = time.monotonic()
         try:
             llm.complete(role, [Message("system", "Reply with the single word OK.")], None)
-        except Exception as error:
+        except LlmError as error:
             print(f"{role}: FAILED: {_refusal_reason(error)}")
             exit_code = 1
             continue
@@ -101,7 +107,7 @@ def _run_models(args: argparse.Namespace) -> int:
                     f"{role}: json_schema not honoured (reply is not valid JSON); "
                     'set structured = "json_object"'
                 )
-            except Exception as error:
+            except LlmError as error:
                 print(
                     f"{role}: json_schema not honoured ({_refusal_reason(error)}); "
                     'set structured = "json_object"'
@@ -112,9 +118,6 @@ def _run_models(args: argparse.Namespace) -> int:
 
 
 def _make_read_line(history_path: Path) -> Callable[[str], str]:
-    from prompt_toolkit import PromptSession
-    from prompt_toolkit.history import FileHistory
-
     history_path.parent.mkdir(parents=True, exist_ok=True)
     return PromptSession(history=FileHistory(str(history_path))).prompt
 

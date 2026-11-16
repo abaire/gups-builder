@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from gups_builder.engine.world import PackageInfo, Schema, WorldDescription
 from gups_builder.modes.testgen import builder_test
 from gups_builder.star.reader import DeclView, PackageView
-from gups_builder.star.values import Value
+
+if TYPE_CHECKING:
+    from gups_builder.star.values import Value
 
 
 def _world(package: str, kind: str | None) -> WorldDescription:
@@ -132,9 +136,13 @@ def test_each_exit_after_the_first_gets_a_fresh_player_in_the_room() -> None:
 
 
 def test_an_open_door_is_testable_but_a_closed_one_is_not() -> None:
-    OPEN: Value = {"$call": "door", "args": [], "kwargs": {"state": {"$const": "DOOR.open"}}}
-    hall = _room("hall", [_exit(_dir("north"), ":a", door=OPEN)], 1)
-    a = _room("a", [_exit(_dir("south"), ":hall", door=OPEN)], 2)
+    open_door: Value = {
+        "$call": "door",
+        "args": [],
+        "kwargs": {"state": {"$const": "DOOR.open"}},
+    }
+    hall = _room("hall", [_exit(_dir("north"), ":a", door=open_door)], 1)
+    a = _room("a", [_exit(_dir("south"), ":hall", door=open_door)], 2)
     view = PackageView(path="zones/mansion", files={}, decls=[hall, a], opaque=[])
     text = builder_test("zones/mansion", _world("zones/mansion", "zone"), view)
     assert '    p.do("north")\n    t.eq(p.room, ":a")\n' in text

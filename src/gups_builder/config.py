@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import tomllib
-from collections.abc import Mapping
-from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+    from pathlib import Path
 
 StructuredMode = Literal["json_schema", "json_object", "none"]
 
@@ -75,7 +77,8 @@ def _cast(field: str, value: Any, source: str) -> Any:
         if field in _NUMERIC:
             return int(value)
     except (TypeError, ValueError):
-        raise ValueError(f"invalid {field} {value!r} from {source}") from None
+        msg = f"invalid {field} {value!r} from {source}"
+        raise ValueError(msg) from None
     return value
 
 
@@ -121,7 +124,8 @@ def _load_role(
         )
         if field == "structured":
             if value not in ("json_schema", "json_object", "none"):
-                raise ValueError(f"invalid structured mode {value!r} for {role} from {source}")
+                msg = f"invalid structured mode {value!r} for {role} from {source}"
+                raise ValueError(msg)
         else:
             value = _cast(field, value, source)
         values[field] = value

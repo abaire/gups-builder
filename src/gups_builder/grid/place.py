@@ -8,10 +8,13 @@ or a room they never reach, is returned off-map.
 
 from __future__ import annotations
 
-from gups_builder.engine.world import RoomInfo
+from typing import TYPE_CHECKING
 
-from .derive import DIRECTION_DELTAS
-from .model import Coord
+from gups_builder.grid.derive import DIRECTION_DELTAS
+
+if TYPE_CHECKING:
+    from gups_builder.engine.world import RoomInfo
+    from gups_builder.grid.model import Coord
 
 
 def room_id(label: str) -> str:
@@ -39,11 +42,14 @@ def place_existing(
             for other_rid, other in by_id.items():
                 if other_rid not in coords:
                     continue
-                for exit in other.exits:
-                    if exit.to != f"//{package}:{rid}" or exit.dir not in DIRECTION_DELTAS:
+                for room_exit in other.exits:
+                    if (
+                        room_exit.to != f"//{package}:{rid}"
+                        or room_exit.dir not in DIRECTION_DELTAS
+                    ):
                         continue
                     origin = coords[other_rid]
-                    delta = DIRECTION_DELTAS[exit.dir]
+                    delta = DIRECTION_DELTAS[room_exit.dir]
                     candidates.add(
                         (origin[0] + delta[0], origin[1] + delta[1], origin[2] + delta[2])
                     )

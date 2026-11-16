@@ -19,11 +19,13 @@ def load_prompt(name: str, **fields: str) -> str:
     try:
         text = (_PROMPTS / f"{name}.md").read_text(encoding="utf-8")
     except FileNotFoundError:
-        raise FileNotFoundError(f"no prompt template named '{name}'") from None
+        msg = f"no prompt template named '{name}'"
+        raise FileNotFoundError(msg) from None
     try:
         return text.format_map(fields)
     except KeyError as error:
-        raise ValueError(f"prompt '{name}' is missing the field '{error.args[0]}'") from error
+        msg = f"prompt '{name}' is missing the field '{error.args[0]}'"
+        raise ValueError(msg) from error
 
 
 def estimate_tokens(text: str) -> int:

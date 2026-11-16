@@ -9,23 +9,26 @@ something the model can fix: it is reported, not repaired.
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Literal, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol
 
 from pydantic import BaseModel
 
-from gups_builder.config import Config
-from gups_builder.engine.api import ApiEntry, ApiModel
-from gups_builder.engine.gups import TestRun
-from gups_builder.engine.lint import LintFinding
+from gups_builder.engine.lint import LintFinding  # noqa: TC001
 from gups_builder.engine.staging import staged_world
-from gups_builder.engine.world import WorldDescription
-from gups_builder.llm.client import LlmClient
-from gups_builder.star.ops import StarOp
-from gups_builder.star.reader import PackageView
 from gups_builder.star.writer import apply_ops
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+    from pathlib import Path
+
+    from gups_builder.config import Config
+    from gups_builder.engine.api import ApiEntry, ApiModel
+    from gups_builder.engine.gups import TestRun
+    from gups_builder.engine.world import WorldDescription
+    from gups_builder.llm.client import LlmClient
+    from gups_builder.star.ops import StarOp
+    from gups_builder.star.reader import PackageView
 
 
 class Engine(Protocol):
@@ -99,7 +102,7 @@ def _entry(api: ApiModel, decl: str) -> ApiEntry | None:
         return None
 
 
-def allowed_values(api: ApiModel, world: WorldDescription, decl: str, param: str) -> list[str]:
+def allowed_values(api: ApiModel, _world: WorldDescription, decl: str, param: str) -> list[str]:
     """The param's allowed values; empty when the declaration or param is absent."""
     entry = _entry(api, decl)
     if entry is None:
@@ -172,7 +175,7 @@ def stage_and_check(ctx: Context, proposal: Proposal, builder_test: str | None) 
 
 def _file_in_package(file: str, package: str) -> str:
     prefix = package + "/"
-    return file[len(prefix) :] if file.startswith(prefix) else file
+    return file.removeprefix(prefix)
 
 
 def _render(finding: LintFinding, contents: dict[str, str], package: str) -> str:
@@ -233,4 +236,5 @@ def finalize(
             proposal.notes.extend(f"NOT VALID: {text}" for text in rendered)
             return proposal
         problems = rendered
-    raise AssertionError("unreachable")
+    msg = "unreachable"
+    raise AssertionError(msg)

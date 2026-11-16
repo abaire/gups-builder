@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 import pytest
@@ -16,7 +14,11 @@ from gups_builder.config import Config, RoleConfig
 from gups_builder.llm.client import HttpLlm, LlmError, Message
 from gups_builder.llm.fake import FakeLlm
 from gups_builder.llm.log import CallLog
-from gups_builder.llm.structured import StructuredCallFailed, call_structured
+from gups_builder.llm.structured import StructuredCallError, call_structured
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+    from pathlib import Path
 
 SCHEMA_WORD = {
     "type": "object",
@@ -54,7 +56,7 @@ def _mock(
 
 
 def test_request_body_json_schema_mode() -> None:
-    transport, requests = _mock(lambda r, b: _chat_reply({"content": "OK"}))
+    transport, requests = _mock(lambda _r, _b: _chat_reply({"content": "OK"}))
     llm = HttpLlm(_config(model="m1"), transport=transport)
     assert llm.complete("logic", [Message("user", "hi")], SCHEMA_WORD) == "OK"
     assert len(requests) == 1
@@ -74,7 +76,7 @@ def test_request_body_json_schema_mode() -> None:
 
 
 def test_request_body_bearer_header_and_temperature() -> None:
-    transport, requests = _mock(lambda r, b: _chat_reply({"content": "OK"}))
+    transport, requests = _mock(lambda _r, _b: _chat_reply({"content": "OK"}))
     llm = HttpLlm(_config(model="m1", api_key="k3y", temperature=0.9), transport=transport)
     llm.complete("logic", [Message("system", "s"), Message("user", "u")], None)
     req = requests[0]["request"]
@@ -89,7 +91,7 @@ def test_request_body_bearer_header_and_temperature() -> None:
 
 
 def test_request_body_json_object_mode_appends_schema() -> None:
-    transport, requests = _mock(lambda r, b: _chat_reply({"content": "OK"}))
+    transport, requests = _mock(lambda _r, _b: _chat_reply({"content": "OK"}))
     llm = HttpLlm(_config(model="m1", structured="json_object"), transport=transport)
     llm.complete("logic", [Message("user", "plan")], SCHEMA_WORD)
     body = requests[0]["body"]
@@ -101,7 +103,7 @@ def test_request_body_json_object_mode_appends_schema() -> None:
 
 
 def test_request_body_none_mode_no_response_format_and_schema_appended() -> None:
-    transport, requests = _mock(lambda r, b: _chat_reply({"content": "OK"}))
+    transport, requests = _mock(lambda _r, _b: _chat_reply({"content": "OK"}))
     llm = HttpLlm(_config(model="m1", structured="none"), transport=transport)
     llm.complete("logic", [Message("user", "plan")], SCHEMA_WORD)
     body = requests[0]["body"]
@@ -110,23 +112,26 @@ def test_request_body_none_mode_no_response_format_and_schema_appended() -> None
 
 
 def test_empty_model_raises_llm_error_naming_role() -> None:
-    llm = HttpLlm(Config(), transport=httpx.MockTransport(lambda r: httpx.Response(200, json={})))
+    llm = HttpLlm(Config(), transport=httpx.MockTransport(lambda _r: httpx.Response(200, json={})))
     with pytest.raises(LlmError, match="the prose model is not configured"):
         llm.complete("prose", [Message("user", "hi")], None)
 
 
 def test_http_500_raises_llm_error_with_role_url_status() -> None:
-    transport, _ = _mock(lambda r, b: httpx.Response(500, text="boom"))
+    transport, _ = _mock(lambda _r, _b: httpx.Response(500, text="boom"))
     llm = HttpLlm(_config(model="m1", api_key="k"), transport=transport)
     with pytest.raises(LlmError) as exc:
         llm.complete("logic", [Message("user", "hi")], None)
     message = str(exc.value)
-    assert "logic" in message and "11434" in message and "500" in message
+    assert "logic" in message
+    assert "11434" in message
+    assert "500" in message
 
 
 def test_timeout_raises_llm_error() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        raise httpx.TimeoutException("timed out")
+    def handler(_request: httpx.Request) -> httpx.Response:
+        msg = "timed out"
+        raise httpx.TimeoutException(msg)
 
     llm = HttpLlm(_config(model="m1"), transport=httpx.MockTransport(handler))
     with pytest.raises(LlmError):
@@ -141,7 +146,7 @@ def test_400_on_json_schema_retried_once_as_json_object_and_logged(tmp_path: Pat
         {"content": '{"word": "ok"}'},
     ]
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(_request: httpx.Request) -> httpx.Response:
         status = responses.pop(0)
         if status == 400:
             return httpx.Response(400, text="response_format unsupported")
@@ -165,7 +170,7 @@ def test_400_twice_raises_llm_error(tmp_path: Path) -> None:
     llm = HttpLlm(
         _config(model="m1"),
         log=log,
-        transport=httpx.MockTransport(lambda r: httpx.Response(400, text="no")),
+        transport=httpx.MockTransport(lambda _r: httpx.Response(400, text="no")),
     )
     with pytest.raises(LlmError):
         llm.complete("logic", [Message("user", "hi")], SCHEMA_WORD)
@@ -208,7 +213,7 @@ def test_call_structured_repair_after_extra_check() -> None:
 
 def test_call_structured_exhausts_repairs_and_raises() -> None:
     llm = FakeLlm({"logic": ["bad", "still bad"]})
-    with pytest.raises(StructuredCallFailed) as exc:
+    with pytest.raises(StructuredCallError) as exc:
         call_structured(llm, "logic", [Message("user", "reply")], _Word, max_repairs=1)
     assert exc.value.attempts == ["bad", "still bad"]
     assert len(exc.value.errors) == 2
@@ -366,7 +371,7 @@ def test_models_refused_reply_that_does_not_validate(
 def test_models_plain_request_failure_exits_1(
     capsys: pytest.CaptureFixture[str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    transport, _ = _mock(lambda r, b: httpx.Response(500, text="down"))
+    transport, _ = _mock(lambda _r, _b: httpx.Response(500, text="down"))
     monkeypatch.setattr(cli, "_make_client", lambda _config: HttpLlm(_config, transport=transport))
     monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path / "home")
     rc = cli.main(
@@ -415,7 +420,7 @@ def test_json_object_fallback_appends_the_schema() -> None:
 
 
 def test_schema_without_a_user_message_is_sent_as_one() -> None:
-    transport, requests = _mock(lambda r, b: _chat_reply({"content": "OK"}))
+    transport, requests = _mock(lambda _r, _b: _chat_reply({"content": "OK"}))
     llm = HttpLlm(_config(model="m1", structured="none"), transport=transport)
     llm.complete("logic", [Message("system", "be terse")], SCHEMA_WORD)
     messages = requests[0]["body"]["messages"]
@@ -433,7 +438,7 @@ def test_schema_without_a_user_message_is_sent_as_one() -> None:
     ],
 )
 def test_unusable_200_body_raises_llm_error(response: httpx.Response) -> None:
-    llm = HttpLlm(_config(model="m1"), transport=httpx.MockTransport(lambda r: response))
+    llm = HttpLlm(_config(model="m1"), transport=httpx.MockTransport(lambda _r: response))
     with pytest.raises(LlmError, match="logic"):
         llm.complete("logic", [Message("user", "hi")], None)
 

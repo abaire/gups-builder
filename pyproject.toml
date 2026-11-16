@@ -38,9 +38,6 @@ files = ["src", "tests"]
 line-length = 100
 extend-exclude = ["docs"]
 
-[tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "SIM"]
-
 [tool.pytest.ini_options]
 markers = [
     "engine: needs a real gups binary",

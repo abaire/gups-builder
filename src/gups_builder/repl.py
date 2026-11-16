@@ -14,22 +14,18 @@ import ast
 import hashlib
 import os
 import tempfile
-from collections.abc import Callable, Iterable
 from pathlib import Path
-from typing import Literal, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 import libcst as cst
-from rich.console import Console
 
-from gups_builder.config import Config
 from gups_builder.engine.gups import EngineError
-from gups_builder.engine.world import WorldDescription
 from gups_builder.grid.ascii import render_map
 from gups_builder.grid.derive import DIRECTION_DELTAS
 from gups_builder.grid.model import Connection, Coord, DoorSpec, Grid, GridRoom
 from gups_builder.grid.place import place_existing, room_id
 from gups_builder.llm.client import LlmClient, LlmError, Message
-from gups_builder.llm.structured import StructuredCallFailed
+from gups_builder.llm.structured import StructuredCallError
 from gups_builder.modes import testgen
 from gups_builder.modes.area import AreaBrief, area_turn, create_area
 from gups_builder.modes.area_checks import grid_from_coords
@@ -38,7 +34,6 @@ from gups_builder.modes.mob import MobBrief, create_mobs, mob_turn
 from gups_builder.modes.skill import SkillBrief, create_skill, skill_turn
 from gups_builder.session import Mode, PendingChange, Session, SessionState
 from gups_builder.star.diff import unified_diff
-from gups_builder.star.ops import StarOp
 from gups_builder.star.reader import (
     DeclView,
     PackageView,
@@ -46,8 +41,17 @@ from gups_builder.star.reader import (
     _star_files,
     read_package,
 )
-from gups_builder.star.values import Value
 from gups_builder.star.writer import apply_ops
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterable
+
+    from rich.console import Console
+
+    from gups_builder.config import Config
+    from gups_builder.engine.world import WorldDescription
+    from gups_builder.star.ops import StarOp
+    from gups_builder.star.values import Value
 
 _DoorState = Literal["open", "closed", "locked"]
 _STATE: dict[str, _DoorState] = {"open": "open", "closed": "closed", "locked": "locked"}
@@ -374,7 +378,7 @@ class Repl:
                 self._turn(line)
         except KeyboardInterrupt:
             self._say("cancelled")
-        except (LlmError, StructuredCallFailed, EngineError) as error:
+        except (LlmError, StructuredCallError, EngineError) as error:
             self._say(f"error: {error}")
         self.session.save()
         return True
@@ -868,7 +872,7 @@ class Repl:
         if mode not in ("area", "mob", "skill"):
             self._say("usage: /mode area|mob|skill")
             return
-        self.session.state.mode = cast(Mode, mode)
+        self.session.state.mode = cast("Mode", mode)
         self._say(f"mode is now {mode}")
         for m, note in self.session.state.notes:
             if m == mode:

@@ -174,22 +174,24 @@ with warnings.catch_warnings():
 def parse_describe_world(stdout: str) -> WorldDescription:
     # Lazy import: gups.py imports the models from this module, so the
     # error class is fetched only when the check runs.
-    from .gups import EngineError
+    from gups_builder.engine.gups import EngineError  # noqa: PLC0415
 
     try:
         document = json.loads(stdout)
     except json.JSONDecodeError as error:
-        raise EngineError(
-            f"gups describe-world wrote something that is not JSON: {error}"
-        ) from error
+        msg = f"gups describe-world wrote something that is not JSON: {error}"
+        raise EngineError(msg) from error
     if not isinstance(document, dict):
-        raise EngineError("gups describe-world wrote JSON that is not an object")
+        msg = "gups describe-world wrote JSON that is not an object"
+        raise EngineError(msg)
     if document.get("format") != 1:
-        raise EngineError(
+        msg = (
             f"gups describe-world format {document.get('format')} is not supported; "
             "this gups-builder needs format 1"
         )
+        raise EngineError(msg)
     try:
         return WorldDescription.model_validate(document)
     except ValidationError as error:
-        raise EngineError(f"gups describe-world wrote an unusable document: {error}") from error
+        msg = f"gups describe-world wrote an unusable document: {error}"
+        raise EngineError(msg) from error

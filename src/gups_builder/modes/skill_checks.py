@@ -9,17 +9,20 @@ package's skills, so an edit may name a skill an earlier edit of the turn added.
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Annotated, Literal, TypeGuard
+from typing import TYPE_CHECKING, Annotated, Literal, TypeGuard
 
 from pydantic import BaseModel, Field
 
-from gups_builder.engine.api import ApiEntry, ApiModel
-from gups_builder.engine.world import WorldDescription
 from gups_builder.grid.place import room_id
 from gups_builder.modes.common import Context, Turn, allowed_values
 from gups_builder.star.values import Value, is_editable
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from gups_builder.engine.api import ApiEntry, ApiModel
+    from gups_builder.engine.world import WorldDescription
 
 _ID = re.compile(r"[a-z][a-z0-9_]*")
 _PLACEHOLDER = re.compile(r"\{(\w+)\}")
@@ -107,7 +110,7 @@ SkillEdit = Annotated[
 
 
 class SkillTurn(Turn):
-    edits: list[SkillEdit] = []
+    edits: list[SkillEdit] = Field(default_factory=list)
 
 
 # -- labels --------------------------------------------------------------------
@@ -327,6 +330,9 @@ def skill_problems(ctx: Context, skill: PlannedSkill, taken: set[str]) -> list[s
     return problems
 
 
+_MAX_PROFICIENCY = 100
+
+
 def _teach_problems(ctx: Context, mob_ids: set[str], mob: str, proficiency: int) -> list[str]:
     problems: list[str] = []
     local = local_id(mob, ctx.package)
@@ -334,7 +340,7 @@ def _teach_problems(ctx: Context, mob_ids: set[str], mob: str, proficiency: int)
         problems.append(f"the teach's mob '{mob}' is not a mob of this package")
     elif local not in mob_ids:
         problems.append(f"the teach names the unknown mob '{mob}'")
-    if not 0 <= proficiency <= 100:
+    if not 0 <= proficiency <= _MAX_PROFICIENCY:
         problems.append(f"the proficiency {proficiency} for '{mob}' is outside 0-100")
     return problems
 
@@ -417,44 +423,44 @@ def _int_kwargs(value: Value, callee: str) -> dict[str, int] | None:
     return numbers if len(numbers) == len(kwargs) else None
 
 
-def _whole_number_problems(ctx: Context, name: str, value: Value) -> list[str]:
+def _whole_number_problems(_ctx: Context, name: str, value: Value) -> list[str]:
     if _is_whole_number(value):
         return []
     return [f"the skill field '{name}' must be a whole number"]
 
 
-def _cost_field_problems(ctx: Context, name: str, value: Value) -> list[str]:
+def _cost_field_problems(ctx: Context, _name: str, value: Value) -> list[str]:
     cost = _int_kwargs(value, "vitals")
     if cost is None:
         return ["the skill field 'cost' must be written as vitals(<vital> = <number>, ...)"]
     return _cost_problems(ctx, cost)
 
 
-def _range_field_problems(ctx: Context, name: str, value: Value) -> list[str]:
+def _range_field_problems(ctx: Context, _name: str, value: Value) -> list[str]:
     if not isinstance(value, str):
         return ["the skill field 'range' must be a string"]
     return _range_problems(ctx, value)
 
 
-def _target_field_problems(ctx: Context, name: str, value: Value) -> list[str]:
+def _target_field_problems(ctx: Context, _name: str, value: Value) -> list[str]:
     if not isinstance(value, str):
         return ["the skill field 'target' must be a string"]
     return _target_problems(ctx, value)
 
 
-def _string_list_problems(ctx: Context, name: str, value: Value) -> list[str]:
+def _string_list_problems(_ctx: Context, name: str, value: Value) -> list[str]:
     if isinstance(value, list) and all(isinstance(item, str) for item in value):
         return []
     return [f"the skill field '{name}' must be a list of strings"]
 
 
-def _dict_problems(ctx: Context, name: str, value: Value) -> list[str]:
+def _dict_problems(_ctx: Context, name: str, value: Value) -> list[str]:
     if isinstance(value, dict) and isinstance(value.get("$dict"), list):
         return []
     return [f"the skill field '{name}' must be a dict"]
 
 
-def _effect_field_problems(ctx: Context, name: str, value: Value) -> list[str]:
+def _effect_field_problems(_ctx: Context, _name: str, value: Value) -> list[str]:
     if isinstance(value, dict) and isinstance(value.get("$call"), str):
         return []
     return ["the skill field 'effect' must be an effect call"]

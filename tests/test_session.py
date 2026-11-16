@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from gups_builder.session import PendingChange, Session
 from gups_builder.star.ops import AppendItem, SetArg
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def test_create_load_save_round_trip(tmp_path: Path) -> None:

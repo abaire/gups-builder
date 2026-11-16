@@ -118,7 +118,7 @@ def test_resume_of_a_missing_session_fails_cleanly(
 def _capture_start(monkeypatch: pytest.MonkeyPatch) -> list[Session]:
     started: list[Session] = []
 
-    def start(world: Path, config: object, session: Session) -> int:
+    def start(_world: Path, _config: object, session: Session) -> int:
         started.append(session)
         return 0
 
@@ -154,7 +154,8 @@ def test_area_does_not_offer_a_session_on_another_package(
     started = _capture_start(monkeypatch)
 
     def no_input(prompt: str) -> str:
-        raise AssertionError(f"should not ask: {prompt}")
+        msg = f"should not ask: {prompt}"
+        raise AssertionError(msg)
 
     monkeypatch.setattr("builtins.input", no_input)
     assert cli.main(["--world", str(tmp_path), "area", "zones/b/mansion"]) == 0

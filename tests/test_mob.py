@@ -13,14 +13,12 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
-from conftest import FakeEngine, PackageState, build_context, load_api, read_fixture
 
 from gups_builder.config import Config
 from gups_builder.engine.gups import Gups
-from gups_builder.engine.lint import LintFinding
 from gups_builder.engine.world import (
     MobInfo,
     PackageInfo,
@@ -43,6 +41,10 @@ from gups_builder.star.ops import (
 from gups_builder.star.reader import DeclView, PackageView, read_package
 from gups_builder.star.values import Value, is_editable
 from gups_builder.star.writer import apply_ops
+from tests.conftest import FakeEngine, PackageState, build_context, load_api, read_fixture
+
+if TYPE_CHECKING:
+    from gups_builder.engine.lint import LintFinding
 
 CREATE = Path(__file__).resolve().parent / "fixtures" / "llm" / "mob_create"
 REFINE = Path(__file__).resolve().parent / "fixtures" / "llm" / "mob_refine"
@@ -804,9 +806,7 @@ def test_a_package_without_rooms_gives_the_mob_no_vitals_test() -> None:
 
 
 @pytest.mark.engine
-def test_the_scripted_goblins_pass_the_real_engine(
-    tmp_path: Path, gups_bin: Path, template_world: Path
-) -> None:
+def test_the_scripted_goblins_pass_the_real_engine(gups_bin: Path, template_world: Path) -> None:
     gups = Gups(gups_bin, template_world)
     world = gups.describe_world()
     api = gups.api()

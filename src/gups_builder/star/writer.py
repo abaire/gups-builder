@@ -10,9 +10,8 @@ and parsed back, so a written list keeps its one-item-per-line shape.
 from __future__ import annotations
 
 import ast
-from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import overload
+from typing import TYPE_CHECKING, overload
 
 import libcst as cst
 from libcst.metadata import CodeRange, MetadataWrapper, PositionProvider
@@ -32,11 +31,14 @@ from gups_builder.star.reader import PackageView, StarParseError
 from gups_builder.star.render import comment_lines, render_decl, render_value
 from gups_builder.star.values import Value, is_editable, to_value
 
+if TYPE_CHECKING:
+    from collections.abc import Iterable, Iterator, Mapping, Sequence
+
 _WS = cst.SimpleWhitespace
 _INDENT = _WS("    ")
 
 
-class OpRefused(Exception):
+class OpRefusedError(Exception):
     """An op that could not be applied, with a reason written for the user."""
 
     def __init__(self, op: StarOp, reason: str, file: str | None, line: int | None) -> None:
@@ -50,7 +52,7 @@ class OpRefused(Exception):
 @dataclass
 class ApplyResult:
     files: dict[str, str]
-    refused: list[OpRefused] = field(default_factory=list)
+    refused: list[OpRefusedError] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -64,16 +66,18 @@ class _Found:
 
 def apply_ops(current: dict[str, str], view: PackageView, ops: list[StarOp]) -> ApplyResult:
     contents = dict(current)
-    refused: list[OpRefused] = []
+    refused: list[OpRefusedError] = []
     for op in ops:
         try:
             after = _apply_one(contents, view, op)
             _check_parses(op, contents, after)
-        except OpRefused as refusal:
+        except OpRefusedError as refusal:
             refused.append(refusal)
             continue
-        except (ValueError, cst.CSTValidationError) as error:
-            refused.append(OpRefused(op, f"this change could not be written: {error}", None, None))
+        except (ValueError, TypeError, cst.CSTValidationError) as error:
+            refused.append(
+                OpRefusedError(op, f"this change could not be written: {error}", None, None)
+            )
             continue
         contents = after
     files = {
@@ -96,7 +100,7 @@ def _check_parses(op: StarOp, before: dict[str, str], after: dict[str, str]) -> 
         try:
             cst.parse_module(text)
         except cst.ParserSyntaxError as error:
-            raise OpRefused(
+            raise OpRefusedError(
                 op,
                 f"this change would not be valid Starlark ({name}:{error.editor_line}); "
                 "it was not applied",
@@ -116,8 +120,10 @@ def _writable(value: Value) -> bool:
     return True
 
 
-def _plain_only(op: SetArg | AppendItem) -> OpRefused:
-    return OpRefused(op, f"{op.kind} '{op.id}': {op.name} may only hold a plain value", None, None)
+def _plain_only(op: SetArg | AppendItem) -> OpRefusedError:
+    return OpRefusedError(
+        op, f"{op.kind} '{op.id}': {op.name} may only hold a plain value", None, None
+    )
 
 
 def _refuse_if_computed(op: StarOp, found: _Found, name: str, node: cst.BaseExpression) -> None:
@@ -128,7 +134,7 @@ def _refuse_if_computed(op: StarOp, found: _Found, name: str, node: cst.BaseExpr
     text = (
         f"{op.kind} '{op.id}': {name} is computed by code ({found.file}:{line}); change it by hand"
     )
-    raise OpRefused(op, text, found.file, line)
+    raise OpRefusedError(op, text, found.file, line)
 
 
 def _arg_indent(call: cst.Call) -> int:
@@ -163,14 +169,15 @@ def _apply_one(contents: dict[str, str], view: PackageView, op: StarOp) -> dict[
         return _op_append_item(contents, op)
     if isinstance(op, RemoveItem):
         return _op_remove_item(contents, op)
-    raise AssertionError(f"unknown op: {op!r}")
+    msg = f"unknown op: {op!r}"
+    raise AssertionError(msg)
 
 
-def _find_decl(contents: dict[str, str], kind: str, id: str) -> _Found | None:
-    """The plain declaration of (kind, id), re-parsed from the current contents."""
+def _find_decl(contents: dict[str, str], kind: str, decl_id: str) -> _Found | None:
+    """The plain declaration of (kind, decl_id), re-parsed from the current contents."""
     for name in sorted(contents):
         module, positions = _parse_contents(contents, name)
-        hit = _declaration_in(module, positions, kind, id)
+        hit = _declaration_in(module, positions, kind, decl_id)
         if hit is not None:
             statement, call = hit
             return _Found(name, module, statement, call, positions)
@@ -190,13 +197,13 @@ def _parse_contents(
 
 def _declaration_in(
     module: cst.Module,
-    positions: Mapping[cst.CSTNode, CodeRange],
+    _positions: Mapping[cst.CSTNode, CodeRange],
     kind: str,
-    id: str,
+    decl_id: str,
 ) -> tuple[cst.SimpleStatementLine, cst.Call] | None:
-    """The (statement, call) that plainly declares (kind, id) in ``module``, if any."""
+    """The (statement, call) that plainly declares (kind, decl_id) in ``module``, if any."""
     for statement in _simple_statements(module.body):
-        call = _first_decl_call(statement, kind, id)
+        call = _first_decl_call(statement, kind, decl_id)
         if call is not None:
             return statement, call
     return None
@@ -209,17 +216,19 @@ def _simple_statements(body: Sequence[cst.BaseStatement]) -> Iterator[cst.Simple
             yield statement
 
 
-def _first_decl_call(statement: cst.SimpleStatementLine, kind: str, id: str) -> cst.Call | None:
-    """The first item of a statement that declares (kind, id) plainly, if any."""
+def _first_decl_call(
+    statement: cst.SimpleStatementLine, kind: str, decl_id: str
+) -> cst.Call | None:
+    """The first item of a statement that declares (kind, decl_id) plainly, if any."""
     for item in statement.body:
-        call = _decl_item(item, kind, id)
+        call = _decl_item(item, kind, decl_id)
         if call is not None:
             return call
     return None
 
 
-def _decl_item(item: cst.BaseSmallStatement, kind: str, id: str) -> cst.Call | None:
-    """The call a statement item declares, when it names (kind, id) plainly."""
+def _decl_item(item: cst.BaseSmallStatement, kind: str, decl_id: str) -> cst.Call | None:
+    """The call a statement item declares, when it names (kind, decl_id) plainly."""
     if not isinstance(item, cst.Expr):
         return None
     if not isinstance(item.value, cst.Call):
@@ -229,7 +238,7 @@ def _decl_item(item: cst.BaseSmallStatement, kind: str, id: str) -> cst.Call | N
         return None
     if call.func.value != kind:
         return None
-    if _decl_id(call) != id:
+    if _decl_id(call) != decl_id:
         return None
     return call
 
@@ -237,7 +246,7 @@ def _decl_item(item: cst.BaseSmallStatement, kind: str, id: str) -> cst.Call | N
 def _decl_of(contents: dict[str, str], op: StarOp) -> _Found:
     found = _find_decl(contents, op.kind, op.id)
     if found is None:
-        raise OpRefused(
+        raise OpRefusedError(
             op, f"{op.kind} '{op.id}' is not a plain declaration in this package", None, None
         )
     return found
@@ -302,7 +311,7 @@ def _op_remove_arg(contents: dict[str, str], op: RemoveArg) -> dict[str, str]:
     args = list(found.call.args)
     index = _arg_index(args, op.name)
     if index is None:
-        raise OpRefused(op, f"{op.kind} '{op.id}': {op.name} has no such argument", None, None)
+        raise OpRefusedError(op, f"{op.kind} '{op.id}': {op.name} has no such argument", None, None)
     arg = args[index]
     _refuse_if_computed(op, found, op.name, arg.value)
     if index == len(args) - 1:
@@ -332,7 +341,7 @@ def _op_append_item(contents: dict[str, str], op: AppendItem) -> dict[str, str]:
     node = arg.value
     _refuse_if_computed(op, found, op.name, node)
     if not isinstance(node, cst.List):
-        raise OpRefused(op, f"{op.kind} '{op.id}': {op.name} is not a list", None, None)
+        raise OpRefusedError(op, f"{op.kind} '{op.id}': {op.name} is not a list", None, None)
     item = _from_value(op.value, _item_indent(node, indent))
     args[index] = arg.with_changes(value=_append_element(node, item))
     return _rewrite_call(contents, found, found.call.with_changes(args=tuple(args)))
@@ -343,11 +352,11 @@ def _op_remove_item(contents: dict[str, str], op: RemoveItem) -> dict[str, str]:
     args = list(found.call.args)
     index = _arg_index(args, op.name)
     if index is None:
-        raise OpRefused(op, f"{op.kind} '{op.id}': {op.name} has no such argument", None, None)
+        raise OpRefusedError(op, f"{op.kind} '{op.id}': {op.name} has no such argument", None, None)
     node = args[index].value
     _refuse_if_computed(op, found, op.name, node)
     if not isinstance(node, cst.List):
-        raise OpRefused(op, f"{op.kind} '{op.id}': {op.name} is not a list", None, None)
+        raise OpRefusedError(op, f"{op.kind} '{op.id}': {op.name} is not a list", None, None)
     element_index = _matched_index(node, op, found.module)
     args[index] = args[index].with_changes(value=_remove_element(node, element_index))
     return _rewrite_call(contents, found, found.call.with_changes(args=tuple(args)))
@@ -358,9 +367,9 @@ def _matched_index(node: cst.List, op: RemoveItem, module: cst.Module) -> int:
     items = [to_value(element.value, module) for element in node.elements]
     matching = [j for j, item in enumerate(items) if _matches(item, op.match)]
     if len(matching) == 0:
-        raise OpRefused(op, f"{op.kind} '{op.id}': {op.name} has no matching item", None, None)
+        raise OpRefusedError(op, f"{op.kind} '{op.id}': {op.name} has no matching item", None, None)
     if len(matching) > 1:
-        raise OpRefused(
+        raise OpRefusedError(
             op, f"{op.kind} '{op.id}': {op.name} has more than one matching item", None, None
         )
     return matching[0]
@@ -444,9 +453,9 @@ def _op_add_todo(contents: dict[str, str], op: AddTodo) -> dict[str, str]:
 
 def _op_add_decl(contents: dict[str, str], view: PackageView, op: AddDecl) -> dict[str, str]:
     if _find_decl(contents, op.kind, op.id) is not None:
-        raise OpRefused(op, f"{op.kind} '{op.id}' already exists", None, None)
+        raise OpRefusedError(op, f"{op.kind} '{op.id}' already exists", None, None)
     if not _all_writable(op.args.values()):
-        raise OpRefused(
+        raise OpRefusedError(
             op, f"new arguments of {op.kind} '{op.id}' must be plain values", None, None
         )
     rendered = render_decl(op.kind, op.id, op.args, op.comment)
@@ -575,7 +584,7 @@ def _element_indent(lst: cst.List) -> cst.SimpleWhitespace:
 
 def _prev_comma(items: Sequence[cst.Arg | cst.BaseElement]) -> cst.Comma | None:
     """The trailing comma of the item before the last, or None if there is none."""
-    if len(items) < 2:
+    if len(items) < 2:  # noqa: PLR2004
         return None
     prev = items[-2].comma
     return prev if isinstance(prev, cst.Comma) else None

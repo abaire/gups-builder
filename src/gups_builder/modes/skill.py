@@ -12,13 +12,11 @@ The plan and turn shapes and their checks are in ``skill_checks``.
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel
 
-from gups_builder.engine.api import ApiModel
-from gups_builder.engine.world import WorldDescription
 from gups_builder.grid.place import room_id
 from gups_builder.llm.client import Message
 from gups_builder.llm.structured import call_structured
@@ -46,9 +44,15 @@ from gups_builder.modes.skill_checks import (
 )
 from gups_builder.prompting import fit, load_prompt
 from gups_builder.star.ops import AddDecl, AddTodo, RemoveDecl, SetArg, StarOp
-from gups_builder.star.reader import DeclView
 from gups_builder.star.render import render_string
 from gups_builder.star.values import Value, is_editable
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterable
+
+    from gups_builder.engine.api import ApiModel
+    from gups_builder.engine.world import WorldDescription
+    from gups_builder.star.reader import DeclView
 
 _BALANCE_OTHERS = 10
 
@@ -115,7 +119,7 @@ def _dict_text(pairs: Value) -> str:
     inner = ", ".join(
         f"{_value_text(pair[0])}: {_value_text(pair[1])}"
         for pair in pairs
-        if isinstance(pair, list) and len(pair) == 2
+        if isinstance(pair, list) and len(pair) == 2  # noqa: PLR2004
     )
     return "{" + inner + "}"
 
@@ -437,7 +441,7 @@ def _skills_value(ctx: Context, skill: str, mob_id: str, proficiency: int) -> Va
 
 def _pair_key(pair: Value) -> str | None:
     """The string key of a ``$dict`` pair, or None for any other shape."""
-    if not isinstance(pair, list) or len(pair) != 2:
+    if not isinstance(pair, list) or len(pair) != 2:  # noqa: PLR2004
         return None
     key = pair[0]
     return key if isinstance(key, str) else None
@@ -588,7 +592,7 @@ def _current_lines(ctx: Context, skill_id: str) -> list[str]:
     for pair in entries:
         key = _pair_key(pair)
         if key is not None:
-            assert isinstance(pair, list)
+            assert isinstance(pair, list)  # noqa: S101
             lines.append(f"{key}: {pair[1] if isinstance(pair[1], str) else '(computed)'}")
     return lines
 

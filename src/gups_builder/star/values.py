@@ -24,7 +24,7 @@ def to_value(expr: cst.BaseExpression, module: cst.Module) -> Value:
             # A prefixed string (f", b", r", u") is not a plain literal.
             return _opaque(expr, module)
         decoded = ast.literal_eval(source)
-        assert isinstance(decoded, str)
+        assert isinstance(decoded, str)  # noqa: S101
         return decoded
     if isinstance(expr, (cst.Integer, cst.Float)):
         magnitude = expr.evaluated_value

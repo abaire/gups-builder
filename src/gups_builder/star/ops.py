@@ -11,7 +11,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
 
-from gups_builder.star.values import Value
+from gups_builder.star.values import Value  # noqa: TC001
 
 
 class ItemMatch(BaseModel):
