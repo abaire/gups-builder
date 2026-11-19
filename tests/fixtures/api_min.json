@@ -1462,31 +1462,94 @@
           "required": true,
           "default": null,
           "allowed_values": [],
-          "doc": "Mob prototype label to spawn.",
+          "doc": "Mob or item prototype label to spawn.",
           "since": 1
         },
         {
-          "symbol": "spawn.count",
-          "name": "count",
+          "symbol": "spawn.id",
+          "name": "id",
+          "type": "str",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "None",
+          "allowed_values": [],
+          "doc": "Optional rule name within the package, resolved to //pkg:<id>.",
+          "since": 1
+        },
+        {
+          "symbol": "spawn.max",
+          "name": "max",
           "type": "int",
           "positional": false,
           "keyword": true,
           "required": false,
           "default": "1",
           "allowed_values": [],
-          "doc": "Maximum number of instances maintained by this rule.",
+          "doc": "Maximum number of tracked copies maintained by this rule.",
           "since": 1
         },
         {
-          "symbol": "spawn.respawn_pulses",
-          "name": "respawn_pulses",
-          "type": "int",
+          "symbol": "spawn.batch",
+          "name": "batch",
+          "type": "int | tuple[int, int]",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "None",
+          "allowed_values": [],
+          "doc": "Copies added per refill, or a (min, max) range; None adds as many as are missing.",
+          "since": 1
+        },
+        {
+          "symbol": "spawn.respawn",
+          "name": "respawn",
+          "type": "int | tuple[int, int] | str",
           "positional": false,
           "keyword": true,
           "required": false,
           "default": "1200",
           "allowed_values": [],
-          "doc": "Pulses before a slain mob respawns.",
+          "doc": "When to refill: pulses, a (min, max) range, 'never' or 'reset'.",
+          "since": 1
+        },
+        {
+          "symbol": "spawn.until",
+          "name": "until",
+          "type": "str",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "None",
+          "allowed_values": [
+            "gone",
+            "taken"
+          ],
+          "doc": "Item rules only: when a placed item stops counting ('gone' or 'taken').",
+          "since": 1
+        },
+        {
+          "symbol": "spawn.stack",
+          "name": "stack",
+          "type": "int | tuple[int, int]",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "None",
+          "allowed_values": [],
+          "doc": "Item rules only: stack size of a stackable copy, or a (min, max) range; None means 1.",
+          "since": 1
+        },
+        {
+          "symbol": "spawn.container",
+          "name": "container",
+          "type": "label",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "None",
+          "allowed_values": [],
+          "doc": "Item rules only: container item prototype label in the room to place copies into.",
           "since": 1
         },
         {
@@ -1499,7 +1562,19 @@
           "required": false,
           "default": "0",
           "allowed_values": [],
-          "doc": "Track index in the room where the mob spawns.",
+          "doc": "Track index in the room where the copy spawns; ignored with container.",
+          "since": 1
+        },
+        {
+          "symbol": "spawn.on_place",
+          "name": "on_place",
+          "type": "function",
+          "positional": false,
+          "keyword": true,
+          "required": false,
+          "default": "None",
+          "allowed_values": [],
+          "doc": "fn(ctx) called once per copy after placement and on_spawn, with ctx.spawner set to this rule.",
           "since": 1
         }
       ]

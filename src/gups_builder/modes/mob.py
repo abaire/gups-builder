@@ -32,6 +32,7 @@ from gups_builder.modes.common import (
     finalize,
     one_question,
     param_allowed,
+    spawn_call,
     turn_sections,
 )
 from gups_builder.modes.mob_checks import (
@@ -179,6 +180,24 @@ def _listed(items: Iterable[str]) -> str:
 
 
 # -- prompts -------------------------------------------------------------------
+
+
+def mob_facts(ctx: Context) -> dict[str, str]:
+    """What the mob prompts tell the logic model about this world, for a designer outside it."""
+    schema = ctx.world.schema
+    return {
+        "stats": _listed(f"{s.name} ({s.label})" for s in schema.stats),
+        "vitals": _listed(f"{v.name} ({v.label})" for v in schema.vitals),
+        "damage_types": _listed(f"{d.name} ({d.label})" for d in schema.damage_types),
+        "channels": _listed(schema.channels),
+        "features": _listed(ctx.world.features),
+        "skills": _skills_text(ctx),
+        "factions": _factions_text(ctx),
+        "traits": _traits_text(ctx),
+        "behaviors": _behaviors_text(ctx.api),
+        "balance": _balance_text(ctx),
+        "existing_mobs": _existing_mobs_text(ctx),
+    }
 
 
 def _rooms_text(ctx: Context) -> str:
@@ -433,19 +452,38 @@ def _create_summary(plan: MobPlan, n_items: int) -> str:
 def _build(ctx: Context, state: _CreateState, problems: list[str]) -> Proposal:
     plan = _plan_call(ctx, _plan_sections(ctx, state, problems), problems=problems)
     state.plan = plan
-    ops: list[StarOp] = []
-    prose_preview: list[tuple[str, str, str]] = []
-    for i, mob in enumerate(plan.mobs, 1):
-        mob_prose = _planned_mob_prose(
+    mob_prose = {
+        mob.id: _planned_mob_prose(
             ctx, state, mob, step=f"writing mob prose ({i}/{len(plan.mobs)}: {mob.id})"
         )
-        ops.append(_mob_decl(ctx, mob, mob_prose))
-        prose_preview.extend(_preview(mob.id, mob_prose))
+        for i, mob in enumerate(plan.mobs, 1)
+    }
+    item_prose = {
+        item_id: _planned_item_prose(ctx, state, item_id, loot)
+        for item_id, loot in new_items(ctx, plan.mobs).items()
+    }
+    return assemble_mobs(ctx, plan, mob_prose, item_prose)
+
+
+def assemble_mobs(
+    ctx: Context,
+    plan: MobPlan,
+    mob_prose: dict[str, MobProse],
+    item_prose: dict[str, ItemProse],
+) -> Proposal:
+    """The proposal for a mob plan whose prose is written: no model is called.
+
+    ``mob_prose`` holds every mob of the plan and ``item_prose`` every item its loot creates.
+    """
+    ops: list[StarOp] = []
+    prose_preview: list[tuple[str, str, str]] = []
+    for mob in plan.mobs:
+        ops.append(_mob_decl(ctx, mob, mob_prose[mob.id]))
+        prose_preview.extend(_preview(mob.id, mob_prose[mob.id]))
     created = new_items(ctx, plan.mobs)
     for item_id, loot in created.items():
-        item = _planned_item_prose(ctx, state, item_id, loot)
-        ops.append(_item_decl(item, item_id, loot.kind))
-        prose_preview.extend(_preview(item_id, item))
+        ops.append(_item_decl(item_prose[item_id], item_id, loot.kind))
+        prose_preview.extend(_preview(item_id, item_prose[item_id]))
     for mob in plan.mobs:
         ops.extend(_placement_ops(ctx, mob))
     return Proposal(
@@ -501,10 +539,7 @@ def _loot_value(ctx: Context, loot: LootSpec) -> Value:
 
 
 def _spawn_value(ctx: Context, mob: str, spawn: SpawnSpec) -> Value:
-    kwargs: dict[str, Value] = {"count": spawn.count}
-    if spawn.respawn_pulses is not None:
-        kwargs["respawn_pulses"] = spawn.respawn_pulses
-    return {"$call": "spawn", "args": [_short_label(mob, ctx.package)], "kwargs": kwargs}
+    return spawn_call(_short_label(mob, ctx.package), spawn.max, spawn.respawn)
 
 
 def _builder_test(ctx: Context) -> Callable[[Proposal], str | None]:
@@ -531,7 +566,7 @@ remove_mob id — remove a mob and the spawns that place it
 set_mob id, fields — set named fields of a mob to new values (Value form)
 add_loot id, loot {item, chance, concept, kind} — add a loot item to a mob
 remove_loot id, item — take a loot item out of a mob
-place spawn {room, count, respawn_pulses}, mob — place a mob in a room
+place spawn {room, max, respawn}, mob — place a mob in a room
 unplace room, mob — take a spawn out of a room
 rewrite ids, guidance — rewrite the prose of existing mobs"""
 

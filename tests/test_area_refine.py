@@ -172,6 +172,12 @@ def test_lock_the_study_puts_doors_on_both_sides(
     key = next(op for op in proposal.ops if isinstance(op, AddDecl) and op.id == "study_key")
     assert key.file == "items.star"
     assert key.args["kind"] == "key"
+    assert proposal.ops[-1] == AppendItem(
+        kind="room",
+        id="hall",
+        name="spawns",
+        value={"$call": "spawn", "args": [":study_key"], "kwargs": {"respawn": "reset"}},
+    )
     assert key.args["name"] == "a heavy brass key"
     assert key.args["desc"] == "A heavy brass key, worn smooth by old hands."
 
@@ -329,7 +335,7 @@ def test_spawns_use_the_package_label_form_in_the_file(
     assert proposal is not None
     add = next(op for op in proposal.ops if isinstance(op, AppendItem) and op.name == "spawns")
     assert add.id == "hall"
-    assert add.value == {"$call": "spawn", "args": [":ghost"], "kwargs": {"count": 1}}
+    assert add.value == {"$call": "spawn", "args": [":ghost"], "kwargs": {}}
     remove = next(op for op in proposal.ops if isinstance(op, RemoveItem) and op.name == "spawns")
     assert remove.id == "cellar"
     assert remove.match == ItemMatch(call="spawn", first_arg=":ghost")

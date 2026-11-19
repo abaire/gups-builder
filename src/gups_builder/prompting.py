@@ -14,13 +14,18 @@ from pathlib import Path
 _PROMPTS = Path(__file__).parent / "prompts"
 
 
-def load_prompt(name: str, **fields: str) -> str:
-    """The text of ``prompts/<name>.md`` with every field substituted."""
+def prompt_template(name: str) -> str:
+    """The text of ``prompts/<name>.md`` as written, its placeholders left in."""
     try:
-        text = (_PROMPTS / f"{name}.md").read_text(encoding="utf-8")
+        return (_PROMPTS / f"{name}.md").read_text(encoding="utf-8")
     except FileNotFoundError:
         msg = f"no prompt template named '{name}'"
         raise FileNotFoundError(msg) from None
+
+
+def load_prompt(name: str, **fields: str) -> str:
+    """The text of ``prompts/<name>.md`` with every field substituted."""
+    text = prompt_template(name)
     try:
         return text.format_map(fields)
     except KeyError as error:

@@ -9,9 +9,9 @@ own, checked in order so an edit may name a room an earlier edit added.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from itertools import count
-from typing import TYPE_CHECKING, Annotated, Literal
+from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -35,10 +35,22 @@ from gups_builder.grid.model import (
     RandomExit,
 )
 from gups_builder.grid.place import room_id
+from gups_builder.modes.area_floor import (
+    floor_labels,
+    full_label,
+    key_reach_problem,
+    key_reach_problems,
+    known_items,
+    local_id,
+    names_item,
+    new_floor_items,
+    package_floors,
+    plan_floor_problems,
+)
 from gups_builder.modes.common import Context, Turn, allowed_values, param_allowed
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Iterator
+    from collections.abc import Callable, Iterator
 
     from gups_builder.engine.world import DoorInfo, ExitInfo, RoomInfo
 
@@ -83,6 +95,16 @@ class PlannedRoom(BaseModel):
 class PlannedKey(BaseModel):
     id: str
     concept: str
+    room: str | None = None  # the room whose floor the key lies on
+
+
+class FloorItem(BaseModel):
+    """An item kept on a room's floor: an existing item, or a new id with a concept."""
+
+    room: str
+    item: str
+    concept: str | None = None
+    kind: str = "misc"
 
 
 class PlannedLink(BaseModel):
@@ -103,6 +125,7 @@ class AreaPlan(BaseModel):
     portals: list[Portal] = []
     random_exits: list[RandomExit] = []
     keys: list[PlannedKey] = []
+    items: list[FloorItem] = []
     entry: str
     link: PlannedLink | None = None
     todos: list[RoomTodo] = []
@@ -130,6 +153,7 @@ class AreaGraph(BaseModel):
     portals: list[Portal] = []
     random_exits: list[RandomExit] = []
     keys: list[PlannedKey] = []
+    items: list[FloorItem] = []
     entry: str
     link: PlannedLink | None = None
     todos: list[RoomTodo] = []
@@ -208,14 +232,31 @@ class AddKey(BaseModel):
     edit: Literal["add_key"] = "add_key"
     id: str
     concept: str
+    room: str | None = None  # the room whose floor the key lies on
+
+
+class PlaceItem(BaseModel):
+    """Keep an item on a room's floor: an existing item, or a new id with a concept."""
+
+    edit: Literal["place_item"] = "place_item"
+    room: str
+    item: str
+    concept: str | None = None
+    kind: str = "misc"
+
+
+class UnplaceItem(BaseModel):
+    edit: Literal["unplace_item"] = "unplace_item"
+    room: str
+    item: str
 
 
 class AddSpawn(BaseModel):
     edit: Literal["add_spawn"] = "add_spawn"
     room: str
     mob: str
-    count: int = 1
-    respawn_pulses: int | None = None
+    max: int = 1
+    respawn: int | None = None  # pulses; None keeps the engine's default timer
 
 
 class RemoveSpawn(BaseModel):
@@ -241,6 +282,8 @@ AreaEdit = Annotated[
     | SetRoom
     | Rewrite
     | AddKey
+    | PlaceItem
+    | UnplaceItem
     | AddSpawn
     | RemoveSpawn
     | AddTodoEdit,
@@ -252,6 +295,9 @@ class AreaTurn(Turn):
     edits: list[AreaEdit] = Field(default_factory=list)
 
 
+# Re-exported: the area mode and design apply name these here.
+__all__ = ["floor_labels", "full_label", "local_id", "new_floor_items"]
+
 _ID = re.compile(r"[a-z][a-z0-9_]*")
 
 _DOOR_STATES: dict[str, Literal["open", "closed", "locked"]] = {
@@ -262,31 +308,6 @@ _DOOR_STATES: dict[str, Literal["open", "closed", "locked"]] = {
 
 
 # -- labels ----------------------------------------------------------------------
-
-
-def local_id(label: str | None, package: str) -> str | None:
-    """The id when the label names something in this package; None otherwise."""
-    if label is None:
-        return None
-    if label.startswith(":"):
-        return label[1:]
-    prefix = f"//{package}:"
-    return label[len(prefix) :] if label.startswith(prefix) else None
-
-
-def full_label(label: str, package: str) -> str:
-    """A label in full: a bare id or ``:id`` is taken to be in this package."""
-    if label.startswith("//"):
-        return label
-    return f"//{package}:{label.removeprefix(':')}"
-
-
-def _known_items(ctx: Context, new_ids: Iterable[str]) -> set[str]:
-    """The items a locked door may name: new ones, the package's, and the world's."""
-    known = set(new_ids)
-    known.update(d.id for d in ctx.view.decls if d.kind == "item")
-    known.update(item.label for item in ctx.world.items)
-    return known
 
 
 # -- the link --------------------------------------------------------------------
@@ -418,6 +439,7 @@ def place_graph(graph: AreaGraph) -> AreaPlan:
         portals=[*graph.portals, *layout.portals],
         random_exits=graph.random_exits,
         keys=graph.keys,
+        items=graph.items,
         entry=graph.entry,
         link=graph.link,
         todos=graph.todos,
@@ -481,7 +503,9 @@ def _plan_id_problems(ctx: Context, plan: AreaPlan) -> list[str]:
     existing = {d.id for d in ctx.view.decls}
     seen: set[str] = set()
     problems: list[str] = []
-    for decl_id in [room.id for room in plan.rooms] + [key.id for key in plan.keys]:
+    ids = [room.id for room in plan.rooms] + [key.id for key in plan.keys]
+    ids.extend(item.item for item in new_floor_items(ctx, plan))
+    for decl_id in ids:
         problems.extend(_decl_id_problems(decl_id, seen, existing))
         seen.add(decl_id)
     return problems
@@ -502,12 +526,14 @@ def plan_problems(ctx: Context, brief: AreaBrief, plan: AreaPlan) -> list[str]:
         _checked_grid(plan),
         entry=plan.entry,
         room_range=(brief.room_count.min, brief.room_count.max),
-        known_items=_known_items(ctx, (key.id for key in plan.keys)),
+        known_items=known_items(ctx, (key.id for key in plan.keys)),
     )
     if plan.link is not None:
         problems.extend(_link_problems(ctx, plan, plan.link))
     problems.extend(_plan_id_problems(ctx, plan))
     problems.extend(_todo_problems(plan))
+    problems.extend(plan_floor_problems(ctx, plan))
+    problems.extend(key_reach_problems(plan_to_grid(plan), plan, ctx.package))
     return problems
 
 
@@ -680,20 +706,33 @@ def _snake_cased(random_exit: RandomExit) -> RandomExit:
 
 
 def _edit_room_ids(edit: AreaEdit) -> list[str]:
-    if isinstance(edit, (AddRoom, RemoveRoom, SetRoom)):
-        return [edit.id]
-    if isinstance(edit, (Connect, Disconnect, SetDoor)):
-        return [edit.a, edit.b]
-    if isinstance(edit, AddPortal):
-        return [edit.portal.a, edit.portal.b]
-    if isinstance(edit, AddRandomExit):
-        # Only its own room is edited; the rooms it picks among are validation's to check.
-        return [edit.random_exit.room]
-    if isinstance(edit, (AddSpawn, RemoveSpawn, AddTodoEdit)):
-        return [edit.room]
-    if isinstance(edit, Rewrite):
-        return list(edit.ids)
-    return []
+    """The rooms of the package an edit names; a random exit edits only its own room."""
+    getter = _EDIT_ROOMS.get(type(edit))
+    return getter(edit) if getter is not None else []
+
+
+def _key_room(edit: AddKey) -> list[str]:
+    return [edit.room] if edit.room is not None else []
+
+
+# The rooms each kind of edit names; the rooms a random exit picks among are validation's to check.
+_EDIT_ROOMS: dict[type, Callable[[Any], list[str]]] = {
+    AddRoom: lambda e: [e.id],
+    RemoveRoom: lambda e: [e.id],
+    SetRoom: lambda e: [e.id],
+    Connect: lambda e: [e.a, e.b],
+    Disconnect: lambda e: [e.a, e.b],
+    SetDoor: lambda e: [e.a, e.b],
+    AddPortal: lambda e: [e.portal.a, e.portal.b],
+    AddRandomExit: lambda e: [e.random_exit.room],
+    AddSpawn: lambda e: [e.room],
+    RemoveSpawn: lambda e: [e.room],
+    AddTodoEdit: lambda e: [e.room],
+    PlaceItem: lambda e: [e.room],
+    UnplaceItem: lambda e: [e.room],
+    AddKey: _key_room,
+    Rewrite: lambda e: list(e.ids),
+}
 
 
 @dataclass
@@ -708,6 +747,8 @@ class _TurnScope:
     passages: set[frozenset[str]]
     sizes: list[str]
     exit_names: dict[str, set[str]]
+    world_items: set[str] = field(default_factory=set)
+    floors: dict[str, set[str]] = field(default_factory=dict)
 
 
 def _opaque_rooms(ctx: Context) -> set[str]:
@@ -744,6 +785,8 @@ def _turn_scope(ctx: Context, coords: dict[str, Coord]) -> _TurnScope:
         exit_names={
             room_id(r.label): {e.dir for e in r.exits} for r in ctx.world.rooms_in(ctx.package)
         },
+        world_items={item.label for item in ctx.world.items},
+        floors=package_floors(ctx),
     )
 
 
@@ -792,8 +835,8 @@ def _spawn_problems(scope: _TurnScope, edit: AddSpawn | RemoveSpawn) -> list[str
     problems = _missing_rooms(scope, edit)
     if full_label(edit.mob, scope.package) not in scope.mobs:
         problems.append(f"there is no mob '{edit.mob}'; spawn one of the listed mobs")
-    if isinstance(edit, AddSpawn) and edit.count < 1:
-        problems.append(f"a spawn of '{edit.mob}' in '{edit.room}' needs a count of 1 or more")
+    if isinstance(edit, AddSpawn) and edit.max < 1:
+        problems.append(f"a spawn of '{edit.mob}' in '{edit.room}' needs a max of 1 or more")
     return problems
 
 
@@ -814,7 +857,58 @@ def _add_key_problems(scope: _TurnScope, edit: AddKey) -> list[str]:
     problems = (
         [f"item '{edit.id}' already exists; pick another id"] if edit.id in scope.items else []
     )
+    if edit.room is None:
+        problems.append(
+            f"the key '{edit.id}' lies in no room; give it the room whose floor it lies on"
+        )
+    else:
+        problems.extend(_missing_rooms(scope, edit))
+        scope.floors.setdefault(edit.room, set()).add(full_label(edit.id, scope.package))
     scope.items.add(edit.id)
+    return problems
+
+
+def _scope_knows_item(scope: _TurnScope, label: str) -> bool:
+    return names_item(scope.items | scope.world_items, label, scope.package)
+
+
+def _new_item_problems(scope: _TurnScope, edit: PlaceItem) -> list[str]:
+    """A placed item the turn creates: a fresh id of this package."""
+    item_id = local_id(full_label(edit.item, scope.package), scope.package) or edit.item
+    scope.items.add(item_id)
+    if not _ID.fullmatch(item_id):
+        return [f"the item id '{item_id}' is not snake_case ([a-z][a-z0-9_]*)"]
+    if _declared_elsewhere(scope, item_id):
+        return [f"the id '{item_id}' is already declared in the package; choose a fresh id"]
+    return []
+
+
+def _declared_elsewhere(scope: _TurnScope, item_id: str) -> bool:
+    """Whether a room or mob of the package already has the id a new item wants."""
+    return item_id in scope.rooms or full_label(item_id, scope.package) in scope.mobs
+
+
+def _place_item_problems(scope: _TurnScope, edit: PlaceItem) -> list[str]:
+    problems = _missing_rooms(scope, edit)
+    if not _scope_knows_item(scope, edit.item):
+        if edit.concept is None:
+            problems.append(
+                f"there is no item '{edit.item}'; place an item of the world, or give a "
+                "concept to create it"
+            )
+        else:
+            problems.extend(_new_item_problems(scope, edit))
+    scope.floors.setdefault(edit.room, set()).add(full_label(edit.item, scope.package))
+    return problems
+
+
+def _unplace_item_problems(scope: _TurnScope, edit: UnplaceItem) -> list[str]:
+    problems = _missing_rooms(scope, edit)
+    floor = scope.floors.get(edit.room, set())
+    label = full_label(edit.item, scope.package)
+    if label not in floor:
+        problems.append(f"'{edit.item}' is not on the floor of '{edit.room}'")
+    floor.discard(label)
     return problems
 
 
@@ -834,6 +928,10 @@ def _catalogue_problems(scope: _TurnScope, edit: AreaEdit) -> list[str]:
         return _add_key_problems(scope, edit)
     if isinstance(edit, AddRandomExit):
         return _random_exit_name_problems(scope, edit)
+    if isinstance(edit, PlaceItem):
+        return _place_item_problems(scope, edit)
+    if isinstance(edit, UnplaceItem):
+        return _unplace_item_problems(scope, edit)
     return []
 
 
@@ -880,11 +978,17 @@ def turn_problems(ctx: Context, coords: dict[str, Coord], turn: AreaTurn) -> lis
     if turn.kind != "edit":
         return []
     entry = entry_room(ctx, coords)
-    known_items = _known_items(ctx, (edit.id for edit in turn.edits if isinstance(edit, AddKey)))
+    known = known_items(ctx, (edit.id for edit in turn.edits if isinstance(edit, AddKey)))
     grid_before = grid_from_coords(ctx, coords)
-    baseline = set(validate(grid_before, entry=entry, room_range=None, known_items=known_items))
+    baseline = set(validate(grid_before, entry=entry, room_range=None, known_items=known))
     grid_after = grid_from_coords(ctx, coords)
     for edit in turn.edits:
         apply_edit_to_grid(grid_after, edit)
-    after = validate(grid_after, entry=entry, room_range=None, known_items=known_items)
-    return [p for p in after if p not in baseline] + _edit_problems(ctx, coords, turn)
+    after = validate(grid_after, entry=entry, room_range=None, known_items=known)
+    reach = [
+        key_reach_problem(grid_after, entry, (edit.id, edit.room), ctx.package)
+        for edit in turn.edits
+        if isinstance(edit, AddKey) and edit.room is not None
+    ]
+    new = [p for p in after if p not in baseline] + [p for p in reach if p]
+    return new + _edit_problems(ctx, coords, turn)

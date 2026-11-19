@@ -2,7 +2,7 @@ room("hall",
     name = "The Hall",
     desc = "Dust lies thick across the hall.",
     exits = [exit(DIR.east, to = ":gate", door = door(state = DOOR.locked, key = ":brass_key"))],
-    spawns = [spawn(":goblin", count = 2)],
+    spawns = [spawn(":goblin", max = 2)],
 )
 
 room("gate",

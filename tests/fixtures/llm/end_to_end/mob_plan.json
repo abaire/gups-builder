@@ -13,7 +13,7 @@
       "factions": [],
       "traits": [],
       "loot": [],
-      "spawns": [{"room": "cellar", "count": 1, "respawn_pulses": null}],
+      "spawns": [{"room": "cellar", "max": 1, "respawn": null}],
       "todos": []
     }
   ]

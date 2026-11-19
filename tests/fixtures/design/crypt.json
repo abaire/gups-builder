@@ -1,0 +1,55 @@
+{
+  "brief": {
+    "title": "The Sunken Crypt",
+    "theme": "a flooded crypt beneath a ruined chapel",
+    "style_notes": "cold water, old stone, candle stubs",
+    "room_count": {"min": 3, "max": 4},
+    "room_concepts": ["a flooded entry stair", "a vaulted ossuary", "a drowned reliquary"],
+    "decisions": ["the reliquary is behind a locked gate"]
+  },
+  "graph": {
+    "rooms": [
+      {"id": "stair", "concept": "a flooded entry stair", "size": "cramped"},
+      {"id": "ossuary", "concept": "a vaulted ossuary", "size": "normal"},
+      {"id": "reliquary", "concept": "a drowned reliquary", "size": "large"}
+    ],
+    "passages": [
+      {"a": "stair", "b": "ossuary", "direction": "north"},
+      {
+        "a": "ossuary",
+        "b": "reliquary",
+        "direction": "east",
+        "door": {"state": "locked", "key": "iron_key", "tags": []}
+      }
+    ],
+    "keys": [{"id": "iron_key", "concept": "a rusted iron key", "room": "stair"}],
+    "items": [{"room": "reliquary", "item": "candle_stub", "concept": "a stub of black candle", "kind": "misc"}],
+    "entry": "stair"
+  },
+  "room_prose": {
+    "stair": {"name": "The Flooded Stair", "desc": "Black water laps at your shins. The steps climb out of it to the north."},
+    "ossuary": {"name": "The Ossuary", "desc": "Skulls line the niches in neat rows. Their empty sockets follow you."},
+    "reliquary": {"name": "The Drowned Reliquary", "desc": "A silver casket rests on a drowned altar. Candle stubs float around it."}
+  },
+  "key_prose": {
+    "iron_key": {"name": "a rusted iron key", "keywords": ["rusted", "iron", "key"], "desc": "Flakes of rust come away on your fingers."}
+  },
+  "mobs": {
+    "mobs": [
+      {
+        "id": "skeleton",
+        "concept": "a skeletal sentry",
+        "level": 2,
+        "loot": [{"item": "bone_charm", "chance": 25, "concept": "a charm of knotted finger bones", "kind": "misc"}],
+        "spawns": [{"room": "ossuary", "max": 1}]
+      }
+    ]
+  },
+  "mob_prose": {
+    "skeleton": {"name": "a skeletal sentry", "keywords": ["skeletal", "sentry", "skeleton"], "desc": "Bones held together by rusted wire creak as it turns its head."}
+  },
+  "item_prose": {
+    "candle_stub": {"name": "a candle stub", "keywords": ["candle", "stub"], "desc": "Black wax, bitten down to the wick."},
+    "bone_charm": {"name": "a bone charm", "keywords": ["bone", "charm"], "desc": "Finger bones knotted on a cord click against each other."}
+  }
+}

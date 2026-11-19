@@ -192,7 +192,7 @@ def test_rooms_with_code_are_left_to_their_own_tests() -> None:
             "visited",
             {
                 "exits": [_exit(_dir("west"), ":plain")],
-                "spawns": [{"$call": "spawn", "args": [":rat"], "kwargs": {"count": 2}}],
+                "spawns": [{"$call": "spawn", "args": [":rat"], "kwargs": {"max": 2}}],
             },
             5,
         ),

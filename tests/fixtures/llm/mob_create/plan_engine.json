@@ -8,7 +8,7 @@
       "vitals": {"hp": 30},
       "behaviors": [{"name": "wander", "args": {}}],
       "loot": [{"item": "//zones/tutorial:brass_key", "chance": 100, "concept": null, "kind": "misc"}],
-      "spawns": [{"room": "cave", "count": 2, "respawn_pulses": null}],
+      "spawns": [{"room": "cave", "max": 2, "respawn": null}],
       "todos": []
     },
     {

@@ -2,6 +2,6 @@
   "kind": "edit",
   "reply": "Moved the goblin into the gate.",
   "edits": [
-    {"edit": "place", "spawn": {"room": "gate", "count": 3, "respawn_pulses": null}, "mob": "goblin"}
+    {"edit": "place", "spawn": {"room": "gate", "max": 3, "respawn": null}, "mob": "goblin"}
   ]
 }

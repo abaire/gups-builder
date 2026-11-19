@@ -8,7 +8,7 @@
       "vitals": {"hp": 30},
       "behaviors": [],
       "loot": [{"item": "goblin_idol", "chance": 10, "concept": "a carved wooden totem", "kind": "misc"}],
-      "spawns": [{"room": "hall", "count": 2, "respawn_pulses": null}],
+      "spawns": [{"room": "hall", "max": 2, "respawn": null}],
       "todos": []
     },
     {

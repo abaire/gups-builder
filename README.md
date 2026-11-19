@@ -2,7 +2,7 @@
 
 `gups-builder` is an interactive terminal tool that helps you build [GUPS](../gups-engine) world content with
 two local LLMs. A **logic** model plans structure — room graphs, numbers, effects, edits — and a **prose** model
-writes the names, descriptions and messages. You steer it in one of three modes: `area` (rooms, exits and doors),
+writes the names, descriptions and messages. You steer it in one of three modes: `area` (rooms, exits, doors, and the items lying on room floors),
 `mob` (mobs and their loot) or `skill` (skills of any `kind`). Every change is reviewed before it touches your
 files, and the `.star` files stay the source of truth you can edit by hand at any time.
 
@@ -115,7 +115,7 @@ the world and run through `gups lint` and `gups test`:
 
 ```
 > a medium sized creepy mansion
-+9 rooms, +1 item, 20 exits
++9 rooms, +1 item, 20 exits, 1 on the floor
 [A]-[B]-[D]
  |
 [C]-[E]
@@ -157,7 +157,7 @@ Decisions:
 (plan) > add a locked library upstairs; other doors stay unlocked
 ...
 (plan) > /build
-+10 rooms, +1 item, 22 exits
++10 rooms, +1 item, 22 exits, 1 on the floor
 [A]-[B]-[D]
  |
 [C]-[E]
@@ -165,6 +165,20 @@ Decisions:
 ```
 
 The resulting proposal behaves like any other: inspect it with `/diff` or `/map`, and save it with `/write`.
+
+### Items on room floors
+
+Area mode puts items on room floors: every key for a locked door lies on the floor of a room, and you can ask
+for other items too ("leave a lantern on the kitchen table", "put the silver key in the study"). An item is either
+new, described by a concept the prose model names and describes, or one the world already declares, in this
+package or another. After a build, `place_item` and `unplace_item` edits change a floor.
+
+Each floor item is a spawn rule in the room's `spawns`, next to its mobs: `spawn(":silver_key", respawn =
+"reset")`. The rule keeps one copy in the world. A player who picks the key up keeps the only one, even after
+logging out, and nothing is put back while it exists; if it leaves the world (destroyed, used up), the next zone
+reset puts a new one on the floor, so a locked door never loses its key for good. Edit a rule by hand (`until =
+"taken"` to restock once the item leaves the room, `max = 3`, a `respawn` timer) and the builder still reads it
+as part of the floor.
 
 ### The other two modes
 
@@ -200,6 +214,42 @@ The session, the call log and the prompt history live under `<world>/.builder/` 
 `logs/<name>.jsonl` and `history` — and a `.gitignore` there keeps them out of version control. Resume a session with
 `gups-builder resume <name>`, and list the sessions of a world with `gups-builder sessions`.
 
+## Designing an area with Claude Code
+
+The `gups-area` skill in [`claude-skills/gups-area/`](claude-skills/gups-area/SKILL.md) lets Claude Code stand in
+for both local models. It interviews you about a new zone one question at a time, keeping a running draft of the
+rooms, mobs and settled decisions. When you say build, it writes a JSON design file, and `gups-builder apply`
+turns that into `.star` files the same way area and mob modes do: it lays out the grid, derives every exit and
+door, writes `builder_test.star`, and stages the result through `gups lint` and `gups test`. No `[logic]` or
+`[prose]` model is needed. The skill builds new zones only; refine them afterwards with `gups-builder area` or
+`mob`.
+
+Install the skill by linking it into the world you build in (or into `~/.claude/skills/` for every world):
+
+```bash
+mkdir -p my-world/.claude/skills
+ln -s "$PWD/claude-skills/gups-area" my-world/.claude/skills/gups-area
+```
+
+Then, in Claude Code in that world, ask for an area ("design a small flooded crypt in zones/crypt") or run
+`/gups-area zones/crypt`. The skill calls `gups-builder` from your `PATH` (`uv tool install .`) or else through
+`uv run --project` on this checkout, and finds `gups` the usual way. An older install on your `PATH` lacks these
+commands; refresh it with `uv tool install --force .`.
+
+The three commands it uses can also be run by hand. Each prints JSON and exits `0` when clean, `1` on a problem
+and `2` when it cannot run:
+
+```bash
+gups-builder --world my-world world-info zones/crypt     # sizes, linkable rooms, mob catalogue
+gups-builder design-schema                               # the design file's schema and the models' rules
+gups-builder --world my-world apply zones/crypt design.json --check-only   # check only, nothing staged
+gups-builder --world my-world apply zones/crypt design.json                # stage, lint and test; writes nothing
+gups-builder --world my-world apply zones/crypt design.json --write        # write when clean (--link: return exit too)
+```
+
+The skill keeps its design files in `<world>/.builder/designs/`, which the builder's `.gitignore` keeps out of git.
+`apply --write` exits `1` when the package does not lint clean as written.
+
 ## Development
 
 The tool is built milestone by milestone from [docs/SPEC.md](docs/SPEC.md), which is the source of truth for
@@ -232,7 +282,8 @@ GUPS_BIN=../gups-engine/cli/build/install/gups/bin/gups uv run pytest -rs
 | `src/gups_builder/config.py` | Layered configuration (flags, env, world file, user file)                     |
 | `src/gups_builder/engine/`   | Wrapper around the `gups` subprocess, world description, lint parsing, staging |
 | `src/gups_builder/llm/`      | OpenAI-compatible client, structured-reply repair loop, call log, `FakeLlm`   |
-| `src/gups_builder/modes/`    | The `area`, `mob` and `skill` pipelines and the generated test                |
+| `src/gups_builder/modes/`    | The `area`, `mob` and `skill` pipelines, design apply, and the generated test |
 | `src/gups_builder/star/`     | Formatting-preserving reading and editing of `.star` files (libcst)           |
 | `src/gups_builder/grid/`     | Integer-grid room placement and ASCII maps                                    |
 | `src/gups_builder/prompts/`  | Prompt templates                                                              |
+| `claude-skills/gups-area/`   | The Claude Code skill that designs an area and applies it with `apply`        |

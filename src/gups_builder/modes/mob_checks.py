@@ -43,8 +43,8 @@ class LootSpec(BaseModel):
 
 class SpawnSpec(BaseModel):
     room: str
-    count: int = 1
-    respawn_pulses: int | None = None
+    max: int = 1
+    respawn: int | None = None  # pulses; None keeps the engine's default timer
 
 
 class PlannedMob(BaseModel):
@@ -395,9 +395,9 @@ def _spawn_problems(ctx: Context, mob: PlannedMob) -> list[str]:
         if spawn.room not in rooms
     ]
     problems.extend(
-        f"the spawn in '{spawn.room}' needs a count of 1 or more"
+        f"the spawn in '{spawn.room}' needs a max of 1 or more"
         for spawn in mob.spawns
-        if spawn.count < 1
+        if spawn.max < 1
     )
     return problems
 
@@ -719,8 +719,8 @@ def _spawn_target_problems(ctx: Context, scope: _TurnScope, room: str, mob: str)
 
 def _place_problems(ctx: Context, scope: _TurnScope, edit: Place) -> list[str]:
     problems = _spawn_target_problems(ctx, scope, edit.spawn.room, edit.mob)
-    if edit.spawn.count < 1:
-        problems.append(f"a spawn in '{edit.spawn.room}' needs a count of 1 or more")
+    if edit.spawn.max < 1:
+        problems.append(f"a spawn in '{edit.spawn.room}' needs a max of 1 or more")
     return problems
 
 

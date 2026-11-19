@@ -283,3 +283,19 @@ def _total_tokens(response: httpx.Response) -> int | None:
 
 def _auth_headers(rc: RoleConfig) -> dict[str, str]:
     return {"Authorization": f"Bearer {rc.api_key}"} if rc.api_key else {}
+
+
+class NoLlm:
+    """A client for the commands that call no model: any call is a bug, so it raises."""
+
+    def complete(
+        self, role: Role, messages: list[Message], json_schema: dict[str, Any] | None
+    ) -> str:
+        msg = f"this command calls no model, but the {role} model was asked"
+        raise LlmError(msg)
+
+    def set_usage_listener(self, listener: Callable[[ContextUsage], None] | None) -> None:
+        pass
+
+    def model_name(self, role: Role) -> str:  # noqa: ARG002
+        return ""

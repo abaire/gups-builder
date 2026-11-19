@@ -144,7 +144,7 @@ def _expected_ops() -> list[AddDecl | AppendItem]:
             kind="room",
             id="hall",
             name="spawns",
-            value={"$call": "spawn", "args": [":goblin"], "kwargs": {"count": 2}},
+            value={"$call": "spawn", "args": [":goblin"], "kwargs": {"max": 2}},
         ),
     ]
 
@@ -347,7 +347,7 @@ def test_place_appends_a_spawn_to_the_room(tmp_path: Path, world_min: WorldDescr
             kind="room",
             id="gate",
             name="spawns",
-            value={"$call": "spawn", "args": [":goblin"], "kwargs": {"count": 3}},
+            value={"$call": "spawn", "args": [":goblin"], "kwargs": {"max": 3}},
         )
     ]
 
@@ -720,7 +720,7 @@ def test_place_writes_a_local_mob_short(tmp_path: Path, world_min: WorldDescript
             kind="room",
             id="gate",
             name="spawns",
-            value={"$call": "spawn", "args": [":goblin"], "kwargs": {"count": 1}},
+            value={"$call": "spawn", "args": [":goblin"], "kwargs": {}},
         )
     ]
 

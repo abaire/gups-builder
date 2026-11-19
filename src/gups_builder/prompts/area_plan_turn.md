@@ -25,7 +25,11 @@ Update `brief` to reflect everything agreed so far:
 What the builder can build, and what it cannot:
 - Rooms on a grid, joined by passages between neighbouring rooms and by named
   exits between any two rooms, each with an optional open, closed or locked
-  door; a locked door gets a key item, planned with the rooms.
+  door; a locked door gets a key item, planned with the rooms and lying on
+  the floor of one of them.
+- Items lying on a room's floor: new items described by a concept, or items
+  the world already has. One copy of each is kept: a player who picks it up
+  keeps it, and it comes back at a zone reset only once it has left the world.
 - One-way exits, with no way back.
 - Random exits: one exit that sends the player to a room picked at random,
   with equal chances, from a list of two or more rooms of this area, every
@@ -34,10 +38,10 @@ What the builder can build, and what it cannot:
 - Room and zone names and descriptions are written by the prose model when
   the area is built, from the concepts and style notes. You cannot ask it for
   anything now; to steer it, put the wish in style_notes or a room concept.
-- Not here: mobs and items other than keys (other modes add them), exits to
-  an area that is not built yet, and scripted behaviour (a hook, or code
-  choosing a random exit's room); each is left as a TODO note on the room for a
-  person to write.
+- Not here: mobs (mob mode adds them and their loot), items carried by a mob
+  or kept inside a container, exits to an area that is not built yet, and
+  scripted behaviour (a hook, or code choosing a random exit's room); each is
+  left as a TODO note on the room for a person to write.
 When the user asks for something not on this list, say so in reply, offer the
 nearest thing the builder can do, and make the choice your one question; never
 say it is done.

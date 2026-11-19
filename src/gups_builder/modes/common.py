@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from gups_builder.llm.client import LlmClient, Message
     from gups_builder.star.ops import StarOp
     from gups_builder.star.reader import PackageView
+    from gups_builder.star.values import Value
 
 
 class Engine(Protocol):
@@ -176,6 +177,16 @@ def param_allowed(api: ApiModel, world: WorldDescription, decl: str, param: str)
     return False
 
 
+def spawn_call(label: str, max_copies: int = 1, respawn: Value | None = None) -> Value:
+    """A ``spawn(...)`` rule for a room's spawns, leaving out what the engine defaults."""
+    kwargs: dict[str, Value] = {}
+    if max_copies != 1:
+        kwargs["max"] = max_copies
+    if respawn is not None:
+        kwargs["respawn"] = respawn
+    return {"$call": "spawn", "args": [label], "kwargs": kwargs}
+
+
 _ID_RUN = re.compile(r"[^a-z0-9]+")
 
 
@@ -248,7 +259,7 @@ def _render(finding: LintFinding, contents: dict[str, str], package: str) -> str
     return "\n".join(parts)
 
 
-def _render_errors(ctx: Context, proposal: Proposal, findings: list[LintFinding]) -> list[str]:
+def render_errors(ctx: Context, proposal: Proposal, findings: list[LintFinding]) -> list[str]:
     result = apply_ops(ctx.files, ctx.view, proposal.ops)
     contents = {**ctx.files, **result.files, **proposal.new_files}
     return [_render(f, contents, ctx.package) for f in findings]
@@ -285,7 +296,7 @@ def finalize(
             return proposal
         if not check.lint_errors:
             return proposal
-        rendered = _render_errors(ctx, proposal, check.lint_errors)
+        rendered = render_errors(ctx, proposal, check.lint_errors)
         if attempt == ctx.config.max_repairs:
             proposal.notes.extend(f"NOT VALID: {text}" for text in rendered)
             return proposal

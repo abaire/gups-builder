@@ -23,7 +23,7 @@
     {"a": "hall", "b": "cellar", "direction": "down"}
   ],
   "portals": [],
-  "keys": [{"id": "silver_key", "concept": "a small silver key"}],
+  "keys": [{"id": "silver_key", "concept": "a small silver key", "room": "study"}],
   "entry": "hall",
   "link": null,
   "todos": []

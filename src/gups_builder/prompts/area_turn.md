@@ -8,6 +8,6 @@ belongs to another mode; set `other_mode` and keep the request in `note`), or
 Edits you may make:
 {catalogue}
 
-Current rooms (id, name, coordinate, exits with their doors, spawns, and the
-fields computed by code, which you must not edit):
+Current rooms (id, name, coordinate, exits with their doors, spawns, the items
+on the floor, and the fields computed by code, which you must not edit):
 {rooms}

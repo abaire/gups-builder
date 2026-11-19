@@ -488,10 +488,13 @@ out the open question. For a package with rooms it runs an edit turn whose reque
 is `format_brief` (decisions included), with no history, carrying the brief's theme
 and style notes. The brief prompt and the planning-turn prompt both list what the builder
 can build — rooms, passages and named exits with doors and keys, one-way exits,
-random exits (equal chances, two or more rooms of the area, no door, no way back) and
-one requested link — and what it cannot: names and prose are written by the prose
-model at build time and cannot be asked for during planning, mobs and items other
-than keys belong to other modes, and scripted behaviour becomes a TODO note. A request
+random exits (equal chances, two or more rooms of the area, no door, no way back),
+one requested link, and items lying on a room's floor (keys, new items described
+by a concept, or items the world already has, one copy each, put back at a zone reset
+only once it has left the world) — and what
+it cannot: names and prose are written by the prose model at build time and cannot
+be asked for during planning, mobs belong to mob mode, items carried by a mob or
+kept inside a container are not built, and scripted behaviour becomes a TODO note. A request
 outside the list is declined in the reply and made the one question. A planning turn
 also rewrites every room concept a later decision changed and drops an answered
 question.
@@ -565,7 +568,9 @@ with fresh snake_case ids, concepts, sizes and tags; a passage for every way tha
 runs in a direction, with a door when one belongs there; a portal for every named
 exit, one-way with no return exit when there is no way back; a random exit for every
 exit that sends the player to a room picked at random, never named with a compass
-direction; a key for every locked door; the entry room; a todo on the room, not a
+direction; a key for every locked door, with the room whose floor it lies on
+(`room`); a floor item (`FloorItem`: `room`, `item`, and for a new item a
+`concept` and a `kind`, `misc` by default) for every other item on a floor; the entry room; a todo on the room, not a
 portal, for an exit to an area not built yet; an optional link — one room, its exit,
 the external room's label, and the return exit; and todos. `place_graph` lays the
 graph out with `lay_out` into the plan (`AreaPlan`) the rest of the mode uses: the
@@ -588,11 +593,19 @@ entry; a room count outside the brief's range; a locked door without a key; a
 door whose key is not an item of the plan — the check knows the plan's own key
 ids, the item ids already declared in the package and every item label in the
 world; and a coordinate-less room joined by a connection. The rest of the plan
-is checked too: a room or key id that is not snake_case (`the id 'Silver Key' is
+is checked too: a room, key or new floor item id that is not snake_case (`the id 'Silver Key' is
 not snake_case ([a-z][a-z0-9_]*)`), used twice in the plan (`the id 'hall' is
 used twice in the plan; give one another id`) or already declared in the package (`the
 id 'hall' is already declared in the package; choose a fresh id`); a todo naming a room
-the plan lacks (`the todo names the unknown room 'attic'; use a room id of the plan`); and
+the plan lacks (`the todo names the unknown room 'attic'; use a room id of the plan`); a key
+with no room (`the key 'x' lies in no room; give it the room whose floor it lies on`) or
+an unknown one (`the key 'x' lies in the unknown room 'y'; use a room id of the plan`); a
+floor item in an unknown room (`the item 'x' lies in the unknown room 'y'; …`), or naming
+no item of the world or plan without a concept (`… is not an item of the
+world or the plan; give it a concept to create it`); an item on one floor twice; a
+key whose room the player reaches from the entry only through a door that key
+locks (`the key 'x' lies in 'y', which the player reaches only through a door it
+opens; put it in a room reachable without it`); and
 a link that starts from an unknown room (`the link starts from the unknown room 'x'; use
 a room id of the plan`), whose external room is not a room
 of the world (`the link's external room '//zones/x:y' does not exist`) or is in
@@ -610,7 +623,8 @@ concept and size, and its neighbours as `direction: concept` lines from the
 derived exits, with the door's state, and a random exit as `name: one of <concept> or
 <concept>, picked anew each time someone goes through`; the reply is a name and a
 single-paragraph desc of 2 to 4 sentences that does not list the exits. One
-prose call per key, with the theme and concept; the reply is a name, keywords
+prose call per key and per new floor item — a floor item with a concept whose
+id nothing declares, once however many floors hold it — with the theme and concept; the reply is a name, keywords
 and a one-sentence desc. An empty name or desc, a newline in either, or a name
 over 60 characters is returned to the model with the complaint. When a lint
 repair rebuilds the plan, the plan call gets the original plan prompt followed by
@@ -625,8 +639,11 @@ order: a standard direction as `DIR.<direction>`, a portal's custom name as a
 plain string, the target as `:<id>` for a room of the plan and the raw label
 otherwise, and the door as a `door` call with its state, its key as `:<id>`
 when the plan named it by id and left alone when it is already a label, and
-its tags when any. For each key, an `AddDecl` into `items.star` with the prose
-name, keywords and desc, and `kind = "key"`. A todo becomes an `AddTodo`. When
+its tags when any, and then, for a room with items on its floor, `spawns`: one
+`spawn(<label>, respawn = "reset")` per item, its keys first and then its floor
+items, each written `:<id>` for this package's items and in full otherwise. For
+each key, an `AddDecl` into `items.star` with the prose name, keywords and desc,
+and `kind = "key"`; for each new floor item, the same with its kind. A todo becomes an `AddTodo`. When
 the plan carries a link, the new room gains an exit to the external label (a
 standard direction as `DIR.<direction>`, as for every exit), and the return exit
 — an `AppendItem` on the external room's exits, named by the plan's return exit
@@ -636,19 +653,22 @@ into `Proposal.link_ops`, with the external room's package in
 `package.star` on disk also gets one: the world's api version,
 `kind = "zone"`, the brief's title, and `reset_world_ticks = 10`.
 
-The summary is `+<n> rooms, +<n> item(s), <n> exits`, counting the exits of
-the plan's connections, portals and random exits, followed by ` (<n> random exit(s))`
+The summary is `+<n> rooms, +<n> item(s), <n> exits`, counting the keys and new
+floor items as items and the exits of the plan's connections, portals and random
+exits, followed by `, <n> on the floor` when any item lies on a floor and ` (<n> random exit(s))`
 when there are any, and gains `, 1 link to <label> (needs confirmation)` when there is a link. The proposal's grid is one coordinate
 triple per room id. The generated test is computed from the package as it
 stands after the ops, so the staged check runs it.
 
 **Refinement.** A follow-up message in area mode goes to the logic model with
 the current rooms — id, name, coordinate or `off-map`, exits with their door
-state and key, spawns, and the fields computed by code, which the model must
-not edit — a note that only a portal may reach an off-map room, the conversation
+state and key, its mob spawns, the items on the floor (`room_floor`: the spawn rules
+whose label is an item of the world or the package, `:<id>` for this package's), and
+the fields computed by code, which the model must not edit — a note that only a portal may reach an off-map room, the conversation
 as far as it fits (see **Prefix caching**), the edit catalogue (one line per edit), and the
 message. Every mob in the world that may be spawned (label, name, level) is a
-section of its own at priority 2. The reply is an `AreaTurn`.
+section of its own at priority 2, and so are the items a floor may hold: the world's
+and the package's (label, name, this package's as `:<id>`). The reply is an `AreaTurn`.
 
 The turn's edits are checked before any prose is requested. They are applied
 to a copy of the grid and checked with the same `validate` as creation, but
@@ -659,8 +679,14 @@ key the same turn adds. Each edit is also checked on its own, in order: an `add_
 valid id and not an existing room; a room an edit names must exist (or be
 added earlier in the turn); a `set_door` or `disconnect` needs a passage
 between the two rooms; a size must be one of the world's room sizes; a spawned
-or unspawned mob must be a mob of the world, and a spawn's count at least 1;
-an `add_key` id must not be an existing item; and an edit naming a room the
+or unspawned mob must be a mob of the world, and a spawn's `max` at least 1;
+an `add_key` id must not be an existing item, and its `room` must be given and
+exist; a `place_item` must name an item of the world or this package (or one
+the turn adds), or give a concept to create it with a snake_case id that no room
+or mob of the package has; an `unplace_item` must name an item the room's floor holds
+(as the files keep it, or as the turn left it); an `add_key` whose room the grid after
+the turn reaches only through a door that key locks gets the creation check's
+sentence; and an edit naming a room the
 reader could not hold as a plain declaration is a problem of its own. Each
 problem is a sentence naming the rooms, sent back for repair.
 
@@ -691,8 +717,17 @@ left unchanged, with a note, when the world has the track feature off. A
 the room's name, its current description and the guidance, and only `desc`
 changes. A new room's prose names its neighbours by room name (the concept for
 a room added in the same turn) with door states. An `add_key` adds a key item
-with its prose. An `add_spawn` appends a `spawn` to a room's spawns, writing
-this package's mobs as `:<id>`; a `remove_spawn` matches the spawn by the
+with its prose and puts it on the floor of its room. A `place_item` (`room`,
+`item`, `concept`, `kind`) puts an item on a floor, creating it with its prose
+and kind when it has a concept and names no declared item; an `unplace_item`
+takes it off. The floors a turn touches start from what the files keep
+(`room_floor`), and each item the turn puts on a floor becomes an `AppendItem` of
+`spawn(<label>, respawn = "reset")` on the room's spawns, and each it takes off a
+`RemoveItem` matched by the label as the file writes it, after every other op, so a
+room or item the turn adds is declared first. A removed room's rules go with its
+`RemoveDecl`. An `add_spawn` appends a `spawn` to a room's spawns, writing
+this package's mobs as `:<id>`, with `max` when it is not 1 and `respawn` when the
+edit gives one; a `remove_spawn` matches the spawn by the
 label as the file writes it, short or full. An `add_todo` leaves a note. When
 an edit would touch a value the reader holds as a `$ref` or `$opaque` — a room
 whose exits are computed by code — the writer refuses that one op with its
@@ -765,7 +800,7 @@ proficiency outside 0–100; a behavior that is not in the world's API, or a
 behavior or argument gated on a feature the world has off; factions when the
 standing feature is off, or a faction that is not a faction of the world; a
 trait no plugin of the world declares; a spawn naming a room the package does
-not have, or with a count below 1; a loot item that is neither an item label of
+not have, or with a `max` below 1; a loot item that is neither an item label of
 the world nor a valid new id of this package with a concept; a new item id
 already declared in the package or used by a mob of the plan; and a loot
 chance outside 1–100. A loot entry with a concept that names an existing item
@@ -816,7 +851,7 @@ or `rewrite` must name a mob of the package; a `set_mob` field must be a field
 of the mob declaration, usable in this world, and its value a plain one; an
 `add_loot` is checked like the plan's loot; a `place` or `unplace` must name a
 room of the package and a mob the package or the world has, and a place needs a
-count of 1 or more; a `set_mob` of `level`, `stats`, `vitals`, `resists`, `skills`, `senses`,
+`max` of 1 or more; a `set_mob` of `level`, `stats`, `vitals`, `resists`, `skills`, `senses`,
 `behaviors`, `factions` or `traits` gets the plan's checks for that field
 (`stats(...)`, `vitals(...)` and `resists(...)` must be calls of whole numbers
 by name, `skills` and `senses` dicts of name to number); a `remove_loot` must
@@ -984,8 +1019,8 @@ direction and the test asserts the target room.
 Code can veto or redirect a move — a room's exit hook, a target's enter hook, a
 mob's `before_exit` — and the builder cannot tell what it does. So a room with
 any field computed by code (a `$ref` or `$opaque` value) gets no exit tests,
-nor does a room that spawns a mob that has such a field, a mob of another
-package, or a mob that is not a plain declaration; and no exit into a room with
+nor does a room that spawns a mob or item that has such a field, one of another
+package, or one that is not a plain declaration; and no exit into a room with
 code, or into one the reader could not hold as a plain declaration, is tested.
 Those rooms are left to the package's own tests.
 
@@ -997,6 +1032,61 @@ room whose spawns name it — else in the package's first room — and asserts
 writes them. A mob with any field computed by code is left to the package's
 own tests, and a package with no rooms gets only the load test, because its
 mobs cannot be spawned anywhere it owns.
+
+### 7.6 Applying a design
+
+A **design** is a new area written outside the builder — by an agent that plays both models, such as the
+`gups-area` Claude Code skill in `claude-skills/` — and applied with no model at all (`modes/design.py`). It is
+one JSON `AreaDesign`: the `brief` (`AreaBrief`) and the `graph` (`AreaGraph`) the logic model would reply with,
+`room_prose` and `key_prose` (`RoomProse` and `ItemProse` keyed by room and key id), `item_prose` (`ItemProse`
+by the id of each item the graph's floors or the mobs' loot create), and optionally `mobs` (a `MobPlan`) with
+`mob_prose` (`MobProse` by mob id). Nothing is repaired: every problem is reported, and the designer edits the design and applies it again.
+
+**Checking** (`check_design`) holds the design to the checks the area and mob modes hold their models' replies to,
+in the order those modes ask for them, so a problem upstream is not buried under the ones it causes. A package
+that already has rooms — in `describe-world` or in its files — is refused with the one problem `<package> already
+has rooms; apply builds new areas only, so refine this one with: gups-builder area <package>`. Otherwise the brief
+is normalized (`normalize_brief`) and the graph placed and normalized (`place_graph`, `normalize_plan`), and
+`brief_problems` and `plan_problems` run. Only when they pass is the prose checked: every room and key has an
+entry (`room_prose has no entry for the room 'x'`), no entry names another id (`room_prose names 'y', which is not
+a room of the graph`), and each passes `prose_check` or `item_prose_check`; every new floor item has an
+`item_prose` entry, held to `item_prose_check`. Then the area is assembled and the
+mobs are checked against the package as the area leaves it, so they may spawn in its rooms and may not reuse its
+ids: the mob `plan_problems`, then `mob_prose` and `item_prose` likewise (`item_prose has no entry for the new item
+'x'`). The report also holds the placed rooms' ASCII map per level (rooms named by concept), each room's
+neighbours exactly as the room prose prompt would show them (`room_neighbours`), and the ids of the items the
+floors and the loot create, the floors' first.
+
+**Applying** (`apply_design`) runs the check and, when it is clean, assembles the area with `assemble_area` — the
+same code `build_from_brief` runs after its model calls, so a design equal to a model's replies gives the same
+files — and the mobs with `assemble_mobs` on the area's result. The package's final contents, with the generated
+test computed from them (§7.5), are staged and checked as `stage_and_check` does (§7.1). The result holds the
+changed and new files, their unified diff, the summary — the area's, then `; ` and the mobs' when there are any —
+the prose preview, notes (refused ops and lint warnings), the lint errors rendered as `finalize` renders them, a
+failing test's output, and the link's return-exit ops and package. It is `ok` when there is no problem, no lint
+error and no test failure.
+
+**Writing** (`write_design`) writes an `ok` result only, and only the package's files. `builder_test.star` is
+written as `builder_test.star.new` beside one that exists with other contents. The link's return exit is written
+into the linked package only when asked for. Each file is written atomically, as the REPL writes (§8). The
+package is then linted as written, and the findings returned.
+
+The commands (§2's global flags apply; none needs a `[logic]` or `[prose]` model) print JSON to standard output
+and exit `0` when clean, `1` on a design problem, lint error or test failure, and `2` when they cannot run — a
+design file that does not parse or validate, no `gups`, or a package file that does not parse — with the reason
+as `error`:
+
+- `gups-builder world-info <package>` prints what the area and mob prompts tell the models about the world and the
+  package (`area_facts`, `mob_facts`): size words, room sizes, layout rules, existing rooms and ids, linkable
+  rooms, stats, vitals, damage types, channels, features, skills, factions, traits, behaviors, balance references
+  and existing mobs, plus `has_rooms`.
+- `gups-builder design-schema` prints the `AreaDesign` JSON schema, the size words, and the prompt templates that
+  carry the models' rules, as written (`area_plan_turn`, `area_graph`, `system_prose`, `room_prose`,
+  `item_prose`, `mob_plan`, `mob_prose`).
+- `gups-builder apply <package> <design.json>` prints the applied result; `--check-only` prints only the check,
+  with no staging; `--write` also writes a clean result, adding `written` and `lint_after_write`, and exits `1`
+  when that lint has an error; `--link` writes the link's return exit too. `world-info` and `apply` make
+  `<world>/.builder/` with its `.gitignore` (§8) when it is missing, since the skill keeps its designs there.
 
 ## 8. Sessions and the interactive loop
 
@@ -1309,7 +1399,29 @@ Decisions made to fill gaps the spec does not settle, each noted with the phase 
   by a broken link are not listed beside it, and a repeated reply gets one fresh request, quoting the reply as text,
   before repairing stops. A refinement turn's `add_room` still gives a coordinate, and is left as it is for now: it
   places one room at a time beside rooms that already have theirs.
-- **Not built:** a standalone item mode (items exist only as loot and keys of the modes that place them), a
-  hook-writing mode (the builder writes `# TODO(gups-builder):` comments where hooks belong, never functions),
+- **Design apply (the `gups-area` skill):** a design is never repaired by the builder — the agent that wrote it
+  is the stronger model and gets every problem at once — so `apply` makes no model call and has no repair loop.
+  Version 1 builds new areas only and refuses a package that has rooms; refining stays with `area` mode. `apply`
+  keeps no session, so `/undo` has no counterpart; a write is undone with version control. A write recomputes the
+  whole result from the files on disk in the same run, so it needs no check that the files changed since a dry
+  run. The mobs are checked and assembled against the package as the staged area leaves it, read from its
+  contents rather than from a second `describe-world` of the staged copy. Mob-plan problems are not prefixed with
+  the mob's id, matching what the mob mode sends its model. The skill lives in `claude-skills/gups-area/` rather
+  than `skills/`, since a world's `skills/` holds skill packages.
+- **Items on floors:** each item on a floor is a spawn rule in the room's `spawns`, written
+  `spawn(<label>, respawn = "reset")` with the engine's default `until = "gone"`, so the rule keeps one copy in
+  the world wherever it goes: a key a player picks up is never put back while they hold it, even logged out,
+  and one destroyed or used up returns at the next zone reset rather than never (`"never"`, the template world's
+  choice for its brass key, would leave a door locked for good once its key is gone). `until = "taken"` is not
+  used, since it would put a new key on the floor once the first left the room. A spawn rule loads the package
+  its label names, so a floor may hold an item of any package. Whether a spawn rule is a floor item or a mob is
+  told by its label: an item of the world or the package is a floor item, anything else a mob spawn. Every key a
+  plan or turn adds must lie on a floor, so a locked door is never left with a key that exists nowhere. Items
+  carried by a mob outside its loot, and items inside a container on the floor, are not built.
+- **Mob spawns:** a mob spawn is written with the engine's `max` and `respawn` (pulses), each left out at its
+  default; the plan and edit fields carry the same names.
+- **Not built:** a standalone item mode (items exist only as loot, keys and floor items of the modes that place
+  them), a hook-writing mode (the builder writes `# TODO(gups-builder):` comments where hooks belong, never
+  functions),
   and a re-import of `describe-world` fields that are not in format 1 (a world that writes another format is
   refused, §3).

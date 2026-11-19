@@ -14,7 +14,7 @@ import json
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel
 
@@ -39,7 +39,7 @@ from gups_builder.modes.area_checks import (
     Connect,
     Disconnect,
     ItemProse,
-    PlannedKey,
+    PlaceItem,
     PlannedLink,
     PlannedRoom,
     RemoveRoom,
@@ -49,15 +49,18 @@ from gups_builder.modes.area_checks import (
     RoomProse,
     SetDoor,
     SetRoom,
+    UnplaceItem,
     apply_edit_to_grid,
     at_most_max_concepts,
     brief_problems,
     concept_count_problems,
     concepts_fit,
+    floor_labels,
     full_label,
     grid_from_coords,
     item_prose_check,
     local_id,
+    new_floor_items,
     normalize_brief,
     normalize_plan,
     place_graph,
@@ -66,6 +69,7 @@ from gups_builder.modes.area_checks import (
     prose_check,
     turn_problems,
 )
+from gups_builder.modes.area_floor import floor_spawn, item_labels, room_floor
 from gups_builder.modes.common import (
     Context,
     Proposal,
@@ -75,6 +79,7 @@ from gups_builder.modes.common import (
     finalize,
     one_question,
     param_allowed,
+    spawn_call,
     turn_sections,
 )
 from gups_builder.prompting import fit, load_prompt
@@ -105,13 +110,17 @@ __all__ = [
     "AreaGraph",
     "AreaPlan",
     "AreaPlanTurn",
+    "AreaProse",
     "AreaTurn",
+    "area_facts",
     "area_turn",
+    "assemble_area",
     "build_from_brief",
     "build_from_plan",
     "create_area",
     "format_brief",
     "plan_to_grid",
+    "room_neighbours",
 ]
 
 SIZE_WORDS = {"tiny": (2, 4), "small": (4, 8), "medium": (8, 15), "large": (15, 30)}
@@ -229,6 +238,18 @@ def format_brief(brief: AreaBrief) -> str:
     if brief.decisions:
         lines.append("Decisions:\n" + "\n".join(f"  - {d}" for d in brief.decisions))
     return "\n".join(lines)
+
+
+def area_facts(ctx: Context) -> dict[str, str]:
+    """What the area prompts tell the logic model about this world, for a designer outside it."""
+    return {
+        "size_words": _size_words_text(),
+        "room_sizes": _size_options(ctx),
+        "layout_rules": LAYOUT_RULES,
+        "existing_rooms": _existing_rooms(ctx),
+        "existing_ids": _existing_ids(ctx),
+        "linkable_rooms": _candidate_links(ctx),
+    }
 
 
 def _planning_rooms(ctx: Context, grid_coords: dict[str, Coord] | None) -> str:
@@ -354,41 +375,48 @@ def _planned_room_prose(
     state.fingerprints[room.id] = fingerprint
 
 
-def _planned_key_prose(
-    ctx: Context, state: _CreateState, key: PlannedKey, step: str | None = None
+def _planned_item_prose(
+    ctx: Context, state: _CreateState, item: tuple[str, str], step: str | None = None
 ) -> ItemProse:
-    """The key's prose, requested again only when its concept changed."""
-    if key.id in state.key_prose and state.key_concepts.get(key.id) == key.concept:
-        return state.key_prose[key.id]
-    prompt = load_prompt("item_prose", theme=state.brief.theme, concept=key.concept)
-    key_prose = _prose_call(ctx, prompt, ItemProse, item_prose_check(key.id), step=step)
-    state.key_prose[key.id] = key_prose
-    state.key_concepts[key.id] = key.concept
-    return key_prose
+    """A new item's prose, by (id, concept), requested again only when its concept changed."""
+    item_id, concept = item
+    if item_id in state.key_prose and state.key_concepts.get(item_id) == concept:
+        return state.key_prose[item_id]
+    prompt = load_prompt("item_prose", theme=state.brief.theme, concept=concept)
+    prose = _prose_call(ctx, prompt, ItemProse, item_prose_check(item_id), step=step)
+    state.key_prose[item_id] = prose
+    state.key_concepts[item_id] = concept
+    return prose
 
 
 def _room_decls(
-    ctx: Context, plan: AreaPlan, state: _CreateState, exits_by_room: dict[str, list[DerivedExit]]
+    ctx: Context,
+    plan: AreaPlan,
+    room_prose: dict[str, RoomProse],
+    exits_by_room: dict[str, list[DerivedExit]],
 ) -> list[StarOp]:
     planned = {room.id for room in plan.rooms}
     size_ok = param_allowed(ctx.api, ctx.world, "room", "size")
+    floors = floor_labels(plan, ctx.package)
     ops: list[StarOp] = []
     link = plan.link
     for room in plan.rooms:
         exits = [_exit_value(e, planned) for e in exits_by_room.get(room.id, [])]
         if link is not None and link.room == room.id:
             exits.append(_link_exit(link.exit, link.external_label, _one_way_link(link)))
-        args = _room_args(room, state.prose[room.id], exits, size_ok=size_ok)
+        args = _room_args(room, room_prose[room.id], exits, size_ok=size_ok)
+        if room.id in floors:
+            args["spawns"] = [floor_spawn(label, ctx.package) for label in floors[room.id]]
         ops.append(AddDecl(file="rooms.star", kind="room", id=room.id, args=args))
     return ops
 
 
-def _key_decl(key_id: str, prose: ItemProse) -> AddDecl:
+def _key_decl(key_id: str, prose: ItemProse, kind: str = "key") -> AddDecl:
     args: dict[str, Value] = {
         "name": prose.name,
         "keywords": list(prose.keywords),
         "desc": prose.desc,
-        "kind": "key",
+        "kind": kind,
     }
     return AddDecl(file="items.star", kind="item", id=key_id, args=args)
 
@@ -420,9 +448,14 @@ def _new_package_files(ctx: Context, brief: AreaBrief) -> dict[str, str]:
     }
 
 
-def _create_summary(plan: AreaPlan, exits_by_room: dict[str, list[DerivedExit]]) -> str:
+def _create_summary(
+    plan: AreaPlan, exits_by_room: dict[str, list[DerivedExit]], n_items: int
+) -> str:
     n_exits = sum(len(v) for v in exits_by_room.values()) + (1 if plan.link is not None else 0)
-    summary = f"+{len(plan.rooms)} rooms, +{_counted(len(plan.keys), 'item')}, {n_exits} exits"
+    summary = f"+{len(plan.rooms)} rooms, +{_counted(n_items, 'item')}, {n_exits} exits"
+    n_placed = len(plan.items) + sum(1 for key in plan.keys if key.room is not None)
+    if n_placed:
+        summary += f", {n_placed} on the floor"
     n_random = sum(1 for v in exits_by_room.values() for e in v if e.candidates)
     if n_random:
         summary += f" ({_counted(n_random, 'random exit')})"
@@ -436,10 +469,10 @@ def _preview(decl_id: str, prose: RoomProse | ItemProse) -> list[tuple[str, str,
 
 
 def _create_preview(
-    plan: AreaPlan, state: _CreateState, keys: list[tuple[str, ItemProse]]
+    plan: AreaPlan, room_prose: dict[str, RoomProse], keys: list[tuple[str, ItemProse]]
 ) -> list[tuple[str, str, str]]:
     """The rooms' prose, then the keys'."""
-    preview = [p for room in plan.rooms for p in _preview(room.id, state.prose[room.id])]
+    preview = [p for room in plan.rooms for p in _preview(room.id, room_prose[room.id])]
     preview.extend(p for key_id, key_prose in keys for p in _preview(key_id, key_prose))
     return preview
 
@@ -448,39 +481,72 @@ def _build(ctx: Context, state: _CreateState, problems: list[str]) -> Proposal:
     graph = _plan_call(ctx, state.brief, _plan_sections(ctx, state, problems), problems)
     state.graph = graph
     plan = _placed(state.brief, graph)
-    exits_by_room = _exits_by_room(plan_to_grid(plan))
-    concepts = {room.id: room.concept for room in plan.rooms}
+    neighbours = room_neighbours(plan)
     for i, room in enumerate(plan.rooms, 1):
-        neighbours = _neighbours_text(exits_by_room.get(room.id, []), concepts)
         _planned_room_prose(
             ctx,
             state,
             room,
-            neighbours,
+            neighbours[room.id],
             step=f"writing room prose ({i}/{len(plan.rooms)}: {room.id})",
         )
-    keys = [
-        (
-            key.id,
-            _planned_key_prose(
-                ctx,
-                state,
-                key,
-                step=f"writing key prose ({i}/{len(plan.keys)}: {key.id})",
-            ),
+    key_prose = {
+        key.id: _planned_item_prose(
+            ctx,
+            state,
+            (key.id, key.concept),
+            step=f"writing key prose ({i}/{len(plan.keys)}: {key.id})",
         )
         for i, key in enumerate(plan.keys, 1)
-    ]
+    }
+    created = new_floor_items(ctx, plan)
+    item_prose = {
+        item.item: _planned_item_prose(
+            ctx,
+            state,
+            (item.item, item.concept or item.item),
+            step=f"writing item prose ({i}/{len(created)}: {item.item})",
+        )
+        for i, item in enumerate(created, 1)
+    }
+    return assemble_area(ctx, state.brief, plan, AreaProse(state.prose, key_prose, item_prose))
 
-    ops = _room_decls(ctx, plan, state, exits_by_room)
-    ops.extend(_key_decl(key_id, key_prose) for key_id, key_prose in keys)
+
+def room_neighbours(plan: AreaPlan) -> dict[str, str]:
+    """Each room's neighbours as its prose prompt shows them, from the exits the plan derives."""
+    exits_by_room = _exits_by_room(plan_to_grid(plan))
+    concepts = {room.id: room.concept for room in plan.rooms}
+    return {
+        room.id: _neighbours_text(exits_by_room.get(room.id, []), concepts) for room in plan.rooms
+    }
+
+
+@dataclass
+class AreaProse:
+    """The written prose of a plan: every room's, every key's and every new floor item's, by id."""
+
+    rooms: dict[str, RoomProse]
+    keys: dict[str, ItemProse]
+    items: dict[str, ItemProse] = field(default_factory=dict)
+
+
+def assemble_area(ctx: Context, brief: AreaBrief, plan: AreaPlan, prose: AreaProse) -> Proposal:
+    """The proposal for a placed plan whose prose is written: no model is called."""
+    room_prose, key_prose = prose.rooms, prose.keys
+    exits_by_room = _exits_by_room(plan_to_grid(plan))
+    keys = [(key.id, key_prose[key.id]) for key in plan.keys]
+    created = new_floor_items(ctx, plan)
+    items = [(item.item, prose.items[item.item]) for item in created]
+    ops = _room_decls(ctx, plan, room_prose, exits_by_room)
+    ops.extend(_key_decl(key_id, prose) for key_id, prose in keys)
+    ops.extend(_key_decl(item.item, prose.items[item.item], item.kind) for item in created)
     ops.extend(AddTodo(kind="room", id=todo.room, text=todo.text) for todo in plan.todos)
     link_ops, link_package = _link_ops(ctx, plan.link)
     return Proposal(
         ops=ops,
-        new_files=_new_package_files(ctx, state.brief),
-        summary=_create_summary(plan, exits_by_room),
-        prose_preview=_create_preview(plan, state, keys),
+        new_files=_new_package_files(ctx, brief),
+        summary=_create_summary(plan, exits_by_room, len(keys) + len(created)),
+        prose_preview=_create_preview(plan, room_prose, [*keys, *items]),
         grid={room.id: (room.at.x, room.at.y, room.at.z) for room in plan.rooms},
         link_ops=link_ops,
         link_package=link_package,
@@ -555,8 +621,11 @@ add_random_exit random_exit {room, exit, to} — an exit with a name of its own,
 two or more rooms in `to`, picked at random each time; no door, no way back
 set_room id, size, tags, regions — change a room's size, tags or regions
 rewrite ids, guidance — rewrite the prose of existing rooms
-add_key id, concept — add a key item, with its prose
-add_spawn room, mob, count, respawn_pulses — spawn a mob into a room
+add_key id, concept, room — add a key item, with its prose, lying on the floor of room
+place_item room, item, concept, kind — keep an item on a room's floor: an existing item's label, \
+or a new id with a concept (and kind) to create it
+unplace_item room, item — take an item off a room's floor
+add_spawn room, mob, max, respawn — spawn a mob into a room
 remove_spawn room, mob — take a spawn out of a room
 add_todo room, text — leave a note on a room for a function to write"""
 
@@ -601,12 +670,18 @@ def _spawn_label(call: dict[str, Value]) -> str | None:
 def _spawn_text(call: dict[str, Value]) -> str:
     label = _spawn_label(call)
     kwargs = call.get("kwargs")
-    count = kwargs.get("count", 1) if isinstance(kwargs, dict) else 1
+    count = kwargs.get("max", 1) if isinstance(kwargs, dict) else 1
     return f"{label if label is not None else '?'} x{count}"
 
 
-def _spawns_text(value: Value | None) -> str:
-    return ", ".join(_spawn_text(call) for call in _spawn_calls(value)) or "none"
+def _spawns_text(value: Value | None, floor: list[str], package: str) -> str:
+    """The room's mob spawns; the rules that place items are its floor, shown apart."""
+    calls = [
+        call
+        for call in _spawn_calls(value)
+        if full_label(_spawn_label(call) or "", package) not in floor
+    ]
+    return ", ".join(_spawn_text(call) for call in calls) or "none"
 
 
 def _where(coords: dict[str, Coord], rid: str) -> str:
@@ -627,13 +702,30 @@ def _exit_text(e: ExitInfo, package: str) -> str:
     return f"{e.dir}->{target} [{e.door.state} door{key}]"
 
 
-def _decl_text(decl: DeclView) -> str:
-    """A plain room's spawns, and the fields its file computes in code."""
-    text = f"; spawns: {_spawns_text(decl.args.get('spawns'))}"
+def _decl_text(ctx: Context, decl: DeclView) -> str:
+    """A plain room's mob spawns, its floor, and the fields its file computes in code."""
+    floor = room_floor(decl, item_labels(ctx), ctx.package)
+    text = f"; spawns: {_spawns_text(decl.args.get('spawns'), floor, ctx.package)}"
+    if floor:
+        text += f"; floor: {', '.join(_short_label(label, ctx.package) for label in floor)}"
     computed = [name for name, value in decl.args.items() if not is_editable(value)]
     if computed:
         text += f"; computed by code: {', '.join(computed)} (do not edit these)"
     return text
+
+
+def _items_text(ctx: Context) -> str:
+    """The items a floor may hold: the world's, and this package's as the files name them."""
+    names = {_short_label(item.label, ctx.package): item.name for item in ctx.world.items}
+    for decl in ctx.view.decls:
+        if decl.kind == "item":
+            name = decl.args.get("name")
+            label = f":{decl.id}"
+            names[label] = name if isinstance(name, str) else names.get(label, decl.id)
+    lines = [f"{label}: {name}" for label, name in sorted(names.items())]
+    return "Items that may lie on a floor (label, name):\n" + (
+        "\n".join(lines) if lines else "none"
+    )
 
 
 def _room_line(ctx: Context, room: RoomInfo, coords: dict[str, Coord], opaque: set[str]) -> str:
@@ -642,7 +734,7 @@ def _room_line(ctx: Context, room: RoomInfo, coords: dict[str, Coord], opaque: s
     line = f"{rid}: {room.name} at {_where(coords, rid)}; exits: {exits}"
     decl = ctx.view.get("room", rid)
     if decl is not None:
-        return line + _decl_text(decl)
+        return line + _decl_text(ctx, decl)
     if rid in opaque:
         return line + "; not a plain declaration (do not edit this room)"
     return line
@@ -688,7 +780,8 @@ def _turn_call(
         catalogue=_CATALOGUE,
         rooms=_rooms_text(ctx, request.coords, request.off_map),
     )
-    prompt = TurnPrompt(head, request.history, request.message, middle=[(2, _mobs_text(ctx))])
+    middle = [(2, _mobs_text(ctx)), (2, _items_text(ctx))]
+    prompt = TurnPrompt(head, request.history, request.message, middle=middle)
     sections = turn_sections(prompt, budget)
     if repair is not None:
         problems, previous = repair
@@ -717,17 +810,15 @@ def _turn_call(
 
 
 def _spawn_value(ctx: Context, edit: AddSpawn) -> Value:
-    kwargs: dict[str, Value] = {"count": edit.count}
-    if edit.respawn_pulses is not None:
-        kwargs["respawn_pulses"] = edit.respawn_pulses
-    label = _short_label(full_label(edit.mob, ctx.package), ctx.package)
-    return {"$call": "spawn", "args": [label], "kwargs": kwargs}
+    return spawn_call(
+        _short_label(full_label(edit.mob, ctx.package), ctx.package), edit.max, edit.respawn
+    )
 
 
-def _spawn_match(ctx: Context, edit: RemoveSpawn) -> ItemMatch:
-    """Match the spawn by the label as the file writes it, short or full."""
-    wanted = full_label(edit.mob, ctx.package)
-    decl = ctx.view.get("room", edit.room)
+def _spawn_match(ctx: Context, room: str, spawned: str) -> ItemMatch:
+    """Match the room's spawn of a mob or item by the label as the file writes it."""
+    wanted = full_label(spawned, ctx.package)
+    decl = ctx.view.get("room", room)
     spawns = decl.args.get("spawns") if decl is not None else None
     for call in _spawn_calls(spawns):
         label = _spawn_label(call)
@@ -882,6 +973,9 @@ class _TurnBuild:
     style_notes: str = "match the existing rooms"
     notes: list[str] = field(default_factory=list)
     preview: list[tuple[str, str, str]] = field(default_factory=list)
+    # The floors the turn touches, as full item labels, from what the files keep.
+    floors: dict[str, list[str]] = field(default_factory=dict)
+    floors_before: dict[str, list[str]] = field(default_factory=dict)
 
 
 @dataclass
@@ -1000,7 +1094,80 @@ def _rewrite_ops(ctx: Context, build: _TurnBuild, edit: Rewrite) -> list[StarOp]
 def _add_key_ops(ctx: Context, build: _TurnBuild, edit: AddKey) -> list[StarOp]:
     key_prose = _key_prose(ctx, build, edit)
     build.preview.extend(_preview(edit.id, key_prose))
+    if edit.room is not None:
+        _floor_of(ctx, build, edit.room).append(full_label(edit.id, ctx.package))
     return [_key_decl(edit.id, key_prose)]
+
+
+def _current_floor(ctx: Context, rid: str) -> list[str]:
+    """The items the room's spawn rules place, as the files keep them."""
+    decl = ctx.view.get("room", rid)
+    if decl is None:
+        return []
+    return room_floor(decl, item_labels(ctx), ctx.package)
+
+
+def _floor_of(ctx: Context, build: _TurnBuild, rid: str) -> list[str]:
+    """The room's floor as the turn leaves it so far."""
+    if rid not in build.floors:
+        build.floors_before[rid] = _current_floor(ctx, rid)
+        build.floors[rid] = list(build.floors_before[rid])
+    return build.floors[rid]
+
+
+def _is_declared_item(ctx: Context, label: str) -> bool:
+    as_id = local_id(label, ctx.package)
+    if as_id is not None and ctx.view.get("item", as_id) is not None:
+        return True
+    return any(item.label == label for item in ctx.world.items)
+
+
+def _place_item_ops(ctx: Context, build: _TurnBuild, edit: PlaceItem) -> list[StarOp]:
+    """The item on the floor, and the item itself when the edit creates it."""
+    label = full_label(edit.item, ctx.package)
+    floor = _floor_of(ctx, build, edit.room)
+    if label not in floor:
+        floor.append(label)
+    if edit.concept is None or _is_declared_item(ctx, label):
+        return []
+    item_id = label.rsplit(":", 1)[1]
+    prompt = load_prompt("item_prose", theme=build.theme, concept=edit.concept)
+    prose = _prose_call(
+        ctx, prompt, ItemProse, item_prose_check(item_id), step=f"writing item prose ({item_id})"
+    )
+    build.preview.extend(_preview(item_id, prose))
+    return [_key_decl(item_id, prose, edit.kind)]
+
+
+def _unplace_item_ops(ctx: Context, build: _TurnBuild, edit: UnplaceItem) -> list[StarOp]:
+    label = full_label(edit.item, ctx.package)
+    floor = _floor_of(ctx, build, edit.room)
+    if label in floor:
+        floor.remove(label)
+    return []
+
+
+def _floor_change_ops(ctx: Context, build: _TurnBuild, removed: set[str]) -> list[StarOp]:
+    """The spawn rules the turn adds to or takes off floors, after the edits that declare things.
+
+    A removed room's rules go with its declaration.
+    """
+    ops: list[StarOp] = []
+    for rid, floor in build.floors.items():
+        if rid in removed:
+            continue
+        before = build.floors_before.get(rid, [])
+        ops.extend(
+            RemoveItem(kind="room", id=rid, name="spawns", match=_spawn_match(ctx, rid, label))
+            for label in before
+            if label not in floor
+        )
+        ops.extend(
+            AppendItem(kind="room", id=rid, name="spawns", value=floor_spawn(label, ctx.package))
+            for label in floor
+            if label not in before
+        )
+    return ops
 
 
 def _random_exit_ops(build: _TurnBuild, edit: AddRandomExit) -> list[StarOp]:
@@ -1023,7 +1190,7 @@ def _plain_edit_ops(ctx: Context, edit: AreaEdit) -> list[StarOp]:
     if isinstance(edit, AddSpawn):
         return [AppendItem(kind="room", id=edit.room, name="spawns", value=_spawn_value(ctx, edit))]
     if isinstance(edit, RemoveSpawn):
-        match = _spawn_match(ctx, edit)
+        match = _spawn_match(ctx, edit.room, edit.mob)
         return [RemoveItem(kind="room", id=edit.room, name="spawns", match=match)]
     if isinstance(edit, AddTodoEdit):
         return [AddTodo(kind="room", id=edit.room, text=edit.text)]
@@ -1042,7 +1209,17 @@ def _edit_ops(ctx: Context, build: _TurnBuild, edit: AreaEdit) -> list[StarOp]:
         return _add_key_ops(ctx, build, edit)
     if isinstance(edit, AddRandomExit):
         return _random_exit_ops(build, edit)
+    handler = _FLOOR_EDITS.get(type(edit))
+    if handler is not None:
+        return handler(ctx, build, edit)
     return _plain_edit_ops(ctx, edit)
+
+
+# The edits that change what lies on a floor; their ops come with the turn's floor changes.
+_FLOOR_EDITS: dict[type, Callable[[Context, _TurnBuild, Any], list[StarOp]]] = {
+    PlaceItem: _place_item_ops,
+    UnplaceItem: _unplace_item_ops,
+}
 
 
 def _turn_build(
@@ -1079,6 +1256,7 @@ def _edit_to_proposal(
     ops.extend(_exit_ops(ctx, turn.edits, build))
     added = sum(isinstance(edit, AddRoom) for edit in turn.edits)
     removed = {edit.id for edit in turn.edits if isinstance(edit, RemoveRoom)}
+    ops.extend(_floor_change_ops(ctx, build, removed))
     return Proposal(
         ops=ops,
         new_files={},

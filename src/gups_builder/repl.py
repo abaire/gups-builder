@@ -12,8 +12,6 @@ from __future__ import annotations
 
 import ast
 import hashlib
-import os
-import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
@@ -42,12 +40,14 @@ from gups_builder.modes.common import Context, Engine, Proposal, Turn
 from gups_builder.modes.mob import MobBrief, create_mobs, mob_turn
 from gups_builder.modes.skill import SkillBrief, create_skill, skill_turn
 from gups_builder.session import Mode, PendingChange, Session, SessionState
+from gups_builder.session import write_atomic as _write_file
 from gups_builder.star.diff import unified_diff
 from gups_builder.star.reader import (
     DeclView,
     PackageView,
     StarParseError,
     _star_files,
+    read_contents,
     read_package,
 )
 from gups_builder.star.writer import apply_ops
@@ -204,16 +204,6 @@ def _room_names(rooms: list[DeclView]) -> dict[str, str]:
     return names
 
 
-def _read_contents(contents: dict[str, str], package: str) -> PackageView:
-    """The package as the given file contents stand it, read from a scratch copy."""
-    with tempfile.TemporaryDirectory() as tmp:
-        pkg = Path(tmp) / "pkg"
-        pkg.mkdir()
-        for name, text in contents.items():
-            (pkg / name).write_text(text, encoding="utf-8")
-        return read_package(pkg, package)
-
-
 def _affected_rooms(
     proposal: Proposal, grid: dict[str, Coord], before: dict[str, Coord]
 ) -> set[str]:
@@ -235,7 +225,7 @@ def _text_sha(text: str | None) -> str | None:
 
 def _builder_test(contents: dict[str, str], package: str, world: WorldDescription) -> str:
     """The generated test for the package as the given contents stand it."""
-    return testgen.builder_test(package, world, _read_contents(contents, package))
+    return testgen.builder_test(package, world, read_contents(contents, package))
 
 
 def _kind_call(item: cst.BaseSmallStatement, kind: str) -> cst.Call | None:
@@ -313,20 +303,6 @@ def _read_texts(directory: Path) -> dict[str, str]:
     return {
         name: (directory / name).read_bytes().decode("utf-8") for name in _star_names(directory)
     }
-
-
-def _write_file(path: Path, text: str) -> None:
-    """Write through a temp file and os.replace, so a crash never leaves half a file."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
-            handle.write(text)
-        os.replace(tmp, path)
-    except BaseException:
-        if os.path.exists(tmp):
-            os.unlink(tmp)
-        raise
 
 
 def session_log_path(world: Path, session_name: str) -> Path:
@@ -731,7 +707,7 @@ class Repl:
         """The grid and names of the package as it stands after the proposal."""
         result = apply_ops(ctx.files, ctx.view, proposal.ops)
         contents = {**ctx.files, **result.files, **proposal.new_files}
-        view_after = _read_contents(contents, ctx.package)
+        view_after = read_contents(contents, ctx.package)
         rooms = [d for d in view_after.decls if d.kind == "room"]
         room_ids = {d.id for d in rooms}
         grid_rooms = [GridRoom(id=d.id, coord=coords.get(d.id), external=False) for d in rooms]

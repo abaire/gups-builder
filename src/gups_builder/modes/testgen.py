@@ -9,8 +9,8 @@ One function per plain mob with declared vitals: it spawns the mob in a room
 of the package and checks its maximum vitals.
 
 Code can veto or redirect a move, and the builder cannot tell what it does, so
-a room with any field computed by code, or one that spawns a mob that has such
-a field (or is not a plain mob of this package), is left to the package's own
+a room with any field computed by code, or one that spawns a mob or item that
+has such a field (or is not a plain one of this package), is left to the package's own
 tests, and so is every exit into a room with code or one the reader could not
 hold as a plain declaration. A mob with a field computed by code is left to
 the package's own tests too.
@@ -75,23 +75,23 @@ def _local_ref(label: Value, path: str) -> str | None:
     return None
 
 
-def _plain_mob(view: PackageView, label: Value) -> bool:
-    """True when the spawned mob is a plain mob of this package with no code."""
-    mob_id = _local_ref(label, view.path)
-    if mob_id is None:
+def _plain_spawned(view: PackageView, label: Value) -> bool:
+    """True when the spawned mob or item is a plain one of this package with no code."""
+    spawned_id = _local_ref(label, view.path)
+    if spawned_id is None:
         return False
-    mob = view.get("mob", mob_id)
-    return mob is not None and not _has_code(mob)
+    decl = view.get("mob", spawned_id) or view.get("item", spawned_id)
+    return decl is not None and not _has_code(decl)
 
 
 def _spawn_is_plain(spawn: Value, view: PackageView) -> bool:
-    """True when the spawn is a well-formed call whose mob is a plain mob."""
+    """True when the spawn is a well-formed call whose mob or item is a plain one."""
     if not isinstance(spawn, dict) or spawn.get("$call") != "spawn":
         return False
     args = spawn.get("args")
     if not isinstance(args, list) or not args:
         return False
-    return _plain_mob(view, args[0])
+    return _plain_spawned(view, args[0])
 
 
 def _without_code(decl: DeclView, view: PackageView) -> bool:

@@ -18,7 +18,7 @@ Ids already declared in the package:
 Use a level, skills, senses, behaviors, factions, traits, loot or spawns only
 when the request or the world calls for them. A level, skills, behaviors and
 factions exist only when the world has the matching feature on, so name only
-what is listed here. A spawn names a room of the package and a count of 1 or
+what is listed here. A spawn names a room of the package and a max of 1 or
 more. A loot item is an item label of the world, or a new id with a concept
 for an item to be created; a new id may not be any id already declared in the
 package or a mob of the plan. A loot chance is 1 to 100. A skill is a skill

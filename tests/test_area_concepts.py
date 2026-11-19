@@ -7,7 +7,13 @@ from typing import TYPE_CHECKING
 
 from gups_builder.llm.fake import FakeLlm
 from gups_builder.modes.area import AreaBrief, build_from_brief
-from tests.test_area_create import _brief_with, _ctx, _expected_ops, _load, _prose_replies
+from tests.test_area_create import (
+    _brief_with,
+    _ctx,
+    _expected_ops,
+    _load,
+    _prose_replies,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path

@@ -25,7 +25,7 @@ from gups_builder.modes.area import (
 from gups_builder.modes.area_checks import place_graph
 from gups_builder.modes.area_plan import PlanRequest, plan_area_turn
 from gups_builder.modes.common import Context, Proposal
-from gups_builder.star.ops import AddDecl, AppendItem
+from gups_builder.star.ops import AddDecl, AppendItem, StarOp
 from gups_builder.star.reader import PackageView
 from tests.conftest import FakeEngine, PackageState, build_context, load_api, read_fixture
 
@@ -106,7 +106,17 @@ DOOR: dict[str, Value] = {
 }
 
 
-def _expected_ops() -> list[AddDecl]:
+def _expected_ops() -> list[StarOp]:
+    """The mansion's declarations; the key lies on the study floor, put back once it is gone."""
+    ops = _mansion_decls()
+    study = next(op for op in ops if op.id == "study")
+    study.args["spawns"] = [
+        {"$call": "spawn", "args": [":silver_key"], "kwargs": {"respawn": "reset"}}
+    ]
+    return list(ops)
+
+
+def _mansion_decls() -> list[AddDecl]:
     return [
         AddDecl(
             file="rooms.star",
@@ -257,7 +267,7 @@ def test_mansion_creation_produces_the_expected_ops(
             ")\n"
         )
     }
-    assert proposal.summary == "+9 rooms, +1 item, 20 exits"
+    assert proposal.summary == "+9 rooms, +1 item, 20 exits, 1 on the floor"
     assert proposal.grid == {
         "hall": (0, 0, 0),
         "kitchen": (1, 0, 0),
@@ -362,7 +372,8 @@ def test_a_link_adds_the_exit_and_a_confirmed_return_exit(
     ]
     assert proposal.link_package == "zones/tutorial"
     assert proposal.summary == (
-        "+9 rooms, +1 item, 21 exits, 1 link to //zones/tutorial:gate (needs confirmation)"
+        "+9 rooms, +1 item, 21 exits, 1 on the floor, 1 link to //zones/tutorial:gate "
+        "(needs confirmation)"
     )
 
 

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 import time
@@ -18,14 +19,25 @@ from rich.console import Console
 from gups_builder.area_tui import run_area_tui
 from gups_builder.config import Config, RoleConfig, load_config
 from gups_builder.engine.gups import EngineError, Gups
-from gups_builder.llm.client import HttpLlm, LlmError, Message
+from gups_builder.llm.client import HttpLlm, LlmError, Message, NoLlm
 from gups_builder.llm.log import CallLog
 from gups_builder.models_tui import run_models_tui
+from gups_builder.modes.design import (
+    AreaDesign,
+    apply_design,
+    check_design,
+    design_rules,
+    world_facts,
+    write_design,
+)
 from gups_builder.repl import Repl, context_factory, session_log_path
-from gups_builder.session import Mode, Session, SessionState
+from gups_builder.session import Mode, Session, SessionState, ensure_builder_dir
+from gups_builder.star.reader import StarParseError
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+    from gups_builder.modes.common import Context
 
 _CLI_FLAGS = ("logic_url", "logic_model", "prose_url", "prose_model", "gups")
 
@@ -240,6 +252,105 @@ def _run_sessions(args: argparse.Namespace) -> int:
     return 0
 
 
+# Exit codes of the model-free commands: clean, a design or lint problem, a usage or engine error.
+_CLEAN, _PROBLEMS, _ERROR = 0, 1, 2
+
+
+def _print_json(data: object) -> None:
+    print(json.dumps(data, indent=2))
+
+
+def _design_context(args: argparse.Namespace) -> Context:
+    """A context on the package with no model behind it; raises EngineError or StarParseError."""
+    world = Path(args.world)
+    config = load_config(world, _build_cli_dict(args), os.environ, Path.home())
+    gups = Gups(Gups.find(config.gups, os.environ), world)
+    return context_factory(world, args.package, gups, NoLlm(), config)()
+
+
+def _run_world_info(args: argparse.Namespace) -> int:
+    ensure_builder_dir(Path(args.world))
+    try:
+        ctx = _design_context(args)
+    except (EngineError, StarParseError) as error:
+        _print_json({"error": str(error)})
+        return _ERROR
+    _print_json(world_facts(ctx))
+    return _CLEAN
+
+
+def _load_design(path: str) -> AreaDesign | str:
+    """The design file, or why it could not be read."""
+    try:
+        return AreaDesign.model_validate_json(Path(path).read_text(encoding="utf-8"))
+    except OSError as error:
+        return f"cannot read {path}: {error}"
+    except ValidationError as error:
+        return f"{path} is not a valid design: {error}"
+
+
+def _run_apply(args: argparse.Namespace) -> int:
+    # Design files are kept under .builder/designs/; the first use keeps all of it out of git.
+    ensure_builder_dir(Path(args.world))
+    design = _load_design(args.design)
+    if isinstance(design, str):
+        _print_json({"error": design})
+        return _ERROR
+    try:
+        ctx = _design_context(args)
+        if args.check_only:
+            report = check_design(ctx, design)
+            _print_json(report.to_json())
+            return _PROBLEMS if report.problems else _CLEAN
+        result = apply_design(ctx, design)
+        out = result.to_json()
+        if args.write and result.ok:
+            written = write_design(ctx, result, with_link=args.link)
+            out["written"] = written.files
+            out["notes"] = [*out["notes"], *written.notes]
+            out["lint_after_write"] = [
+                {"severity": f.severity, "file": f.file, "line": f.line, "message": f.message}
+                for f in written.lint
+            ]
+    except (EngineError, StarParseError) as error:
+        _print_json({"error": str(error)})
+        return _ERROR
+    _print_json(out)
+    lint_errors = any(f["severity"] == "error" for f in out.get("lint_after_write", []))
+    return _CLEAN if result.ok and not lint_errors else _PROBLEMS
+
+
+def _add_design_commands(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    """The commands that apply a design written outside the builder; they call no model."""
+    info = sub.add_parser("world-info", help="print what a designer needs to know, as JSON")
+    info.add_argument("package")
+    sub.add_parser("design-schema", help="print the design file's schema and rules, as JSON")
+    apply = sub.add_parser("apply", help="check, stage and optionally write a design file")
+    apply.add_argument("package")
+    apply.add_argument("design")
+    apply.add_argument("--check-only", action="store_true", help="check without staging")
+    apply.add_argument("--write", action="store_true", help="write the files when clean")
+    apply.add_argument("--link", action="store_true", help="also write the link's return exit")
+
+
+def _run_design_schema(_args: argparse.Namespace) -> int:
+    _print_json(design_rules())
+    return _CLEAN
+
+
+_HANDLERS: dict[str, Callable[[argparse.Namespace], int]] = {
+    "models": _run_models,
+    "area": lambda args: _run_mode(args, "area"),
+    "mob": lambda args: _run_mode(args, "mob"),
+    "skill": lambda args: _run_mode(args, "skill"),
+    "resume": _run_resume,
+    "sessions": _run_sessions,
+    "world-info": _run_world_info,
+    "design-schema": _run_design_schema,
+    "apply": _run_apply,
+}
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="gups-builder")
     parser.add_argument("--world", default=".")
@@ -266,16 +377,13 @@ def main(argv: list[str] | None = None) -> int:
         help="print configuration and probe models without opening the interactive TUI",
     )
 
+    _add_design_commands(sub)
+
     args = parser.parse_args(argv)
 
-    if args.command == "models":
-        return _run_models(args)
-    if args.command in ("area", "mob", "skill"):
-        return _run_mode(args, args.command)
-    if args.command == "resume":
-        return _run_resume(args)
-    if args.command == "sessions":
-        return _run_sessions(args)
+    handler = _HANDLERS.get(args.command)
+    if handler is not None:
+        return handler(args)
     parser.print_help()
     return 0
 

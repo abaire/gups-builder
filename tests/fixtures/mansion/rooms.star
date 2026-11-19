@@ -61,7 +61,7 @@ room("cellar",
     size = SIZE.cramped,
     tags = ["dark"],
     exits = [exit(DIR.up, to = ":parlour")],
-    spawns = [spawn(":ghost", count = 1)],
+    spawns = [spawn(":ghost")],
 )
 
 # The vault's exits are an expression joined with a helper list, which the reader

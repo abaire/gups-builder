@@ -1,9 +1,11 @@
+import json
 from pathlib import Path
 
 import pytest
 
 from gups_builder import cli
 from gups_builder.config import Config
+from gups_builder.engine.gups import Gups
 from gups_builder.session import PendingChange, Session
 
 
@@ -268,3 +270,78 @@ def test_toolbar_shows_the_pending_summary_and_nothing_when_none(tmp_path: Path)
         ops=[], new_files={}, base_hashes={}, summary="3 rooms, 2 items"
     )
     assert cli.toolbar_text(session.state, config).rstrip().endswith("| 3 rooms, 2 items")
+
+
+# -- the model-free design commands --------------------------------------------------
+
+DESIGN = Path(__file__).resolve().parent / "fixtures" / "design" / "crypt.json"
+
+
+def _json_out(capsys: pytest.CaptureFixture[str]) -> dict[str, object]:
+    out: dict[str, object] = json.loads(capsys.readouterr().out)
+    return out
+
+
+def test_design_schema_prints_the_schema_and_rules(capsys: pytest.CaptureFixture[str]) -> None:
+    assert cli.main(["design-schema"]) == 0
+    out = _json_out(capsys)
+    schema = out["schema"]
+    assert isinstance(schema, dict)
+    assert schema["title"] == "AreaDesign"
+    prompts = out["prompts"]
+    assert isinstance(prompts, dict)
+    assert "Do not list the exits." in prompts["room_prose"]
+
+
+def test_apply_reports_a_design_it_cannot_read(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    bad = tmp_path / "design.json"
+    bad.write_text('{"brief": {}}')
+    assert cli.main(["--world", str(tmp_path), "apply", "zones/crypt", str(bad)]) == 2
+    error = _json_out(capsys)["error"]
+    assert isinstance(error, str)
+    assert error.startswith(f"{bad} is not a valid design:")
+    assert (tmp_path / ".builder" / ".gitignore").read_text() == "*\n"
+
+
+@pytest.mark.engine
+def test_world_info_describes_the_package(
+    gups_bin: Path, fresh_template_world: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    args = ["--gups", str(gups_bin), "--world", str(fresh_template_world)]
+    assert cli.main([*args, "world-info", "zones/crypt"]) == 0
+    out = _json_out(capsys)
+    assert out["has_rooms"] is False
+    area = out["area"]
+    assert isinstance(area, dict)
+    assert "//zones/tutorial:gate" in area["linkable_rooms"]
+    assert area["room_sizes"] == "cramped, normal, large"
+
+
+@pytest.mark.engine
+def test_apply_writes_a_design_that_lints_and_tests_clean(
+    gups_bin: Path, fresh_template_world: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    world = fresh_template_world
+    args = ["--gups", str(gups_bin), "--world", str(world)]
+    assert cli.main([*args, "apply", "zones/crypt", str(DESIGN), "--check-only"]) == 0
+    assert _json_out(capsys)["problems"] == []
+
+    assert cli.main([*args, "apply", "zones/crypt", str(DESIGN)]) == 0
+    dry = _json_out(capsys)
+    assert dry["ok"] is True, dry
+    assert not (world / "zones" / "crypt").exists()
+
+    assert cli.main([*args, "apply", "zones/crypt", str(DESIGN), "--write"]) == 0
+    out = _json_out(capsys)
+    assert out["lint_after_write"] == []
+    pkg = world / "zones" / "crypt"
+    names = {"package.star", "rooms.star", "items.star", "mobs.star", "builder_test.star"}
+    assert {p.name for p in pkg.iterdir()} == names
+    assert Gups(gups_bin, world).test("zones/crypt").ok
+
+    assert cli.main([*args, "apply", "zones/crypt", str(DESIGN), "--check-only"]) == 1
+    problems = _json_out(capsys)["problems"]
+    assert isinstance(problems, list)
+    assert problems[0].startswith("zones/crypt already has rooms")

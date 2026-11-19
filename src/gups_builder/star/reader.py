@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import ast
 import hashlib
+import tempfile
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import libcst as cst
@@ -19,7 +21,6 @@ from gups_builder.star.values import Value, to_value
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
-    from pathlib import Path
 
 DECLARATION_KINDS = frozenset({"room", "mob", "item", "skill", "faction", "region", "container"})
 
@@ -68,6 +69,16 @@ class PackageView:
             if decl.kind == kind and decl.id == decl_id:
                 return decl
         return None
+
+
+def read_contents(contents: dict[str, str], package_path: str) -> PackageView:
+    """The package as the given file contents stand it, read from a scratch copy."""
+    with tempfile.TemporaryDirectory() as tmp:
+        pkg = Path(tmp) / "pkg"
+        pkg.mkdir()
+        for name, text in contents.items():
+            (pkg / name).write_text(text, encoding="utf-8")
+        return read_package(pkg, package_path)
 
 
 def read_package(pkg_dir: Path, package_path: str) -> PackageView:

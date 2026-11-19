@@ -27,6 +27,30 @@ Mode = Literal["area", "mob", "skill"]
 _GITIGNORE = "*\n"
 
 
+def ensure_builder_dir(world: Path) -> Path:
+    """The world's .builder directory, made on first use with a .gitignore that ignores it all."""
+    builder = world / ".builder"
+    builder.mkdir(parents=True, exist_ok=True)
+    gitignore = builder / ".gitignore"
+    if not gitignore.exists():
+        gitignore.write_text(_GITIGNORE, encoding="utf-8")
+    return builder
+
+
+def write_atomic(path: Path, text: str) -> None:
+    """Write through a temp file and os.replace, so a crash never leaves half a file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
+            handle.write(text)
+        os.replace(tmp, path)
+    except BaseException:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
+
+
 def _now() -> str:
     return datetime.now(UTC).isoformat()
 
@@ -95,11 +119,7 @@ class Session:
         while cls.path(world, chosen).exists():
             chosen = f"{base}-{n}"
             n += 1
-        builder = world / ".builder"
-        builder.mkdir(parents=True, exist_ok=True)
-        gitignore = builder / ".gitignore"
-        if not gitignore.exists():
-            gitignore.write_text(_GITIGNORE, encoding="utf-8")
+        ensure_builder_dir(world)
         state = SessionState(
             name=chosen, mode=mode, package=package, created=_now(), updated=_now()
         )
